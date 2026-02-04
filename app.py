@@ -12,7 +12,7 @@ st.sidebar.title("⚙️ Dashboard Config")
 st.sidebar.subheader("Intelligence Engine")
 model_choice = st.sidebar.radio(
     "Select Model:",
-    ["☁️ Cloud (Gemini Pro)", "🔒 Local (Ollama/Mistral)"]
+    ["☁️ Cloud (Gemini Pro)", "🔒 Local (Llama 3.2 - Fast)"]
 )
 
 # Initialize LLM
@@ -27,14 +27,15 @@ if model_choice == "☁️ Cloud (Gemini Pro)":
     except ImportError:
         st.sidebar.error("Run: pip install langchain-google-genai")
 
-elif model_choice == "🔒 Local (Ollama/Mistral)":
+elif model_choice == "🔒 Local (Llama 3.2 - Fast)":
     try:
-        from langchain_community.llms import Ollama
-        st.sidebar.info("Status: Offline Mode")
-        llm = Ollama(model="mistral") 
+        # NEW: Using the faster, modern library
+        from langchain_ollama import OllamaLLM
+        st.sidebar.info("Status: Offline Mode (Edge AI)")
+        llm = OllamaLLM(model="llama3.2:1b") 
         st.sidebar.success("Local Engine Ready ✅")
     except ImportError:
-        st.sidebar.error("Run: pip install langchain-community")
+        st.sidebar.error("Run: pip install langchain-ollama")
 
 st.sidebar.markdown("---")
 
@@ -49,14 +50,11 @@ def load_data():
 try:
     df = load_data()
 
-    # --- 2. SLICERS (Week 3 Requirement) ---
+    # --- 2. SLICERS ---
     st.sidebar.subheader("Filters")
-    
-    # Region Slicer
     region_options = ["All"] + list(df['Region'].unique())
     selected_region = st.sidebar.selectbox("Filter by Region:", region_options)
 
-    # Product Slicer
     product_options = ["All"] + list(df['Product'].unique())
     selected_product = st.sidebar.selectbox("Filter by Product:", product_options)
 
@@ -70,67 +68,45 @@ try:
     # --- LAYOUT ---
     col1, col2 = st.columns([2, 1])
 
-    # LEFT COLUMN: Dynamic Visuals
     with col1:
         st.subheader(f"📈 Market Overview ({selected_region})")
-        
-        # KPI Cards
         k1, k2, k3 = st.columns(3)
-        total_rev = df_filtered['Sales'].sum()
-        avg_sale = df_filtered['Sales'].mean()
-        total_profit = df_filtered['Profit'].sum()
+        k1.metric("Revenue", f"${df_filtered['Sales'].sum():,}")
+        k2.metric("Avg. Sale", f"${int(df_filtered['Sales'].mean())}")
+        k3.metric("Profit", f"${df_filtered['Profit'].sum():,}")
         
-        k1.metric("Revenue", f"${total_rev:,.0f}", delta="Dynamic")
-        k2.metric("Avg. Transaction", f"${avg_sale:.0f}")
-        k3.metric("Net Profit", f"${total_profit:,.0f}")
-        
-        # Charts
-        tab1, tab2 = st.tabs(["Sales Trend", "Category Split"])
+        tab1, tab2 = st.tabs(["Trend", "Category"])
         with tab1:
             st.line_chart(df_filtered.set_index('Date')['Sales'])
         with tab2:
             st.bar_chart(df_filtered.groupby('Product')['Sales'].sum())
 
-        with st.expander("📄 View Raw Data"):
-            st.dataframe(df_filtered.head(10))
-
-    # RIGHT COLUMN: AI Analysis
     with col2:
         st.subheader("🤖 AI Analyst")
-        st.caption(f"Ask questions about the {selected_region} region data.")
-        
-        query = st.text_input("Input Query:", placeholder="Why are sales down in North?")
+        query = st.text_input("Input Query:", placeholder="Why are sales high?")
         
         if st.button("Generate Insight"):
             if not query:
-                st.warning("Please enter a question.")
+                st.warning("Enter a question.")
             elif not llm:
-                st.error("Please configure the Model in the Sidebar.")
+                st.error("Configure Model first.")
             else:
-                with st.spinner("Analyzing context..."):
+                with st.spinner("Analyzing..."):
                     try:
                         # 1. RETRIEVE
                         retriever = get_retriever()
-                        docs = retriever.get_relevant_documents(query)
-                        context_text = "\n\n".join([d.page_content for d in docs])
+                        docs = retriever.invoke(query)
                         
                         # 2. PROMPT
-                        final_prompt = f"""
-                        You are an expert analyst. Answer based on this context:
-                        {context_text}
-                        
-                        User Question: {query}
-                        """
+                        context = "\n".join([d.page_content for d in docs])
+                        prompt = f"Context: {context}\nQuestion: {query}\nAnswer:"
                         
                         # 3. GENERATE
-                        response = llm.invoke(final_prompt)
-                        if hasattr(response, 'content'):
-                            st.info(response.content)
-                        else:
-                            st.info(response)
+                        response = llm.invoke(prompt)
+                        st.info(response)
                             
                     except Exception as e:
                         st.error(f"Error: {e}")
 
 except FileNotFoundError:
-    st.error("Data file not found. Run 'python src/generate_data.py'")
+    st.error("Run 'python src/generate_data.py'")
