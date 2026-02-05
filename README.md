@@ -1,45 +1,60 @@
-# AInsights: RAG-Enhanced Business Intelligence Dashboard
+🤖 AInsights: Autonomous Agentic BI System
+AInsights is a privacy-first, local-intelligence platform designed to transform raw, unstructured data into actionable business strategy. Powered by Llama 3.2 (1B) and running entirely without external API dependencies, it orchestrates a Triple-Agent Relay to clean, visualize, and reason through complex datasets.
 
-**Course:** CSE3232 - Emerging Tools & Technology  
-**Timeline:** Jan 2026 - March 2026  
-**Developer:** [Your Name]
+🏗️ Architecture: The Agentic Trinity
+AInsights is built on a modular "Separation of Concerns" architecture where three specialized agents collaborate to provide a complete BI solution:
 
-## 🚀 Project Objective
-AInsights is a decision-support system that bridges the gap between raw data and actionable intelligence. Unlike traditional dashboards, it integrates **Streamlit** for visualization with a **Hybrid RAG (Retrieval-Augmented Generation)** backend. [cite_start]This allows users to receive context-aware insights and natural language explanations for data anomalies[cite: 8, 9, 10].
+1. Agent A: The Universal Data Engineer
+Role: Ingestion, Sanitization, and Standardization.
 
-## 🛠 Tech Stack
-* **Frontend:** Streamlit (Python-based interactive UI)
-* **Data Processing:** Pandas & NumPy
-* **AI Engine (Hybrid):** * *Cloud Mode:* Google Gemini Pro (via API)
-    * *Offline Mode:* Ollama (Mistral/Llama3) - **Works without Internet**
-* **Vector Database:** FAISS (Local storage for high-speed retrieval)
-* **Embeddings:** `all-MiniLM-L6-v2` (Hugging Face)
+Capabilities: Native support for CSV, XLSX, JSON, PDF, and HTML.
 
-## ⚙️ Installation & Setup
-1.  **Clone the Repository**
-    ```bash
-    git clone [https://github.com/itsjustRohitch/AInsights.git](https://github.com/itsjustRohitch/AInsights.git)
-    cd AInsights
-    ```
+Core Logic: Employs a "Pure Cleaning" philosophy—performing deduplication, currency normalization, and date standardizing while strictly preserving original column names to ensure data lineage and integrity.
 
-2.  **Install Dependencies**
-    ```bash
-    pip install -r requirements.txt
-    ```
+2. Agent B: The Adaptive Visualizer
+Role: Automated UI Generation and Exploratory Data Analysis (EDA).
 
-3.  **Run the Dashboard**
-    ```bash
-    streamlit run app.py
-    ```
+Capabilities: Automatically classifies columns into Metrics (Numeric) and Dimensions (Categorical/Time).
 
-## 🧠 Architecture
-1.  **Data Layer:** Ingests structured sales data (CSV) and unstructured market reports (PDF/TXT).
-2.  **Vector Store:** Uses FAISS to index text chunks for semantic search.
-3.  **RAG Pipeline:** * Retrieves relevant context based on user query.
-    * Injects context into the LLM prompt.
-    * Generates accurate, evidence-based answers.
+Core Logic: Dynamically builds interactive Time-Series Trends, Heatmaps, and KPI Cards based on data-type heuristics without requiring hardcoded column mappings.
 
-## 📸 Features (Week 3 Status)
-* ✅ **Dynamic Slicers:** Filter by Region and Product.
-* ✅ **Interactive Charts:** Auto-updating Line and Bar charts.
-* ✅ **Offline Capability:** Fully functional AI analysis without internet connection.
+3. Agent C: The Reasoning Analyst (The "Ultimatum")
+Role: Strategic Insight and Question Answering.
+
+Capabilities: Advanced Retrieval-Augmented Generation (RAG) using FAISS vector storage.
+
+Core Logic: Operates a Triple-Context Reasoning Loop, synthesizing live dashboard statistics, document-based knowledge from PDF reports, and multi-turn conversational history to explain the "Why" behind business performance.
+
+⚡ Scaling & Performance
+Local-First Architecture: 100% data privacy and zero API costs.
+
+Persistent RAG Engine: Uses HuggingFace (MiniLM-L6) embeddings to index thousands of data rows and document pages into a local FAISS vector store.
+
+Optimized Ingestion: Features recursive character splitting for faster indexing of large-scale CSVs and complex PDF reports.
+
+🚀 Installation & Setup
+Prerequisites
+Python 3.10+
+
+Ollama: Install and run ollama run llama3.2:1b.
+
+Quick Start
+Clone the Repository:
+
+Bash
+git clone https://github.com/itsjustRohitch/AInsights.git
+cd AInsights
+Install Requirements:
+
+Bash
+pip install -r requirements.txt
+Run the System:
+
+Bash
+streamlit run app.py
+🔮 Future Roadmap
+Multi-Modal Ingestion: Support for image-based receipts and charts.
+
+Distributed Vector Storage: Moving from FAISS to Qdrant for enterprise-scale indexing.
+
+Agent Autonomy: Allowing Agent A to automatically suggest new metrics based on detected data anomalies.

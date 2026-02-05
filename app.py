@@ -1,112 +1,124 @@
 import streamlit as st
 import pandas as pd
-from src.rag_engine import get_retriever
+import os      # FIXED: Added missing import
+import glob    # FIXED: Added missing import
+from langchain_ollama import OllamaLLM
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="AInsights", layout="wide")
+# Import your custom Agents from the src folder
+from src.agent_a_engineer import AgentA_Engineer
+from src.agent_b_visualizer import AgentB_Visualizer
+from src.agent_c_analyst import AgentC_Analyst
+from src.rag_engine import process_uploaded_file, process_cleaned_csv
 
-# --- SIDEBAR: CONFIGURATION ---
-st.sidebar.title("⚙️ Dashboard Config")
-
-# 1. AI Model Selection
-st.sidebar.subheader("Intelligence Engine")
-model_choice = st.sidebar.radio(
-    "Select Model:",
-    ["☁️ Cloud (Gemini Pro)", "🔒 Local (Llama 3.2 - Fast)"]
+# --- 1. PAGE CONFIGURATION ---
+st.set_page_config(
+    page_title="AInsights: Agentic Intelligence",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Initialize LLM
-llm = None
-if model_choice == "☁️ Cloud (Gemini Pro)":
-    try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        api_key = st.sidebar.text_input("Gemini API Key:", type="password")
-        if api_key:
-            llm = ChatGoogleGenerativeAI(model="gemini-pro", google_api_key=api_key)
-            st.sidebar.success("Online Mode Ready ✅")
-    except ImportError:
-        st.sidebar.error("Run: pip install langchain-google-genai")
+# --- 2. SESSION STATE MANAGEMENT ---
+if 'data' not in st.session_state: st.session_state.data = None
+if 'engineer_logs' not in st.session_state: st.session_state.engineer_logs = []
+if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 
-elif model_choice == "🔒 Local (Llama 3.2 - Fast)":
-    try:
-        # NEW: Using the faster, modern library
-        from langchain_ollama import OllamaLLM
-        st.sidebar.info("Status: Offline Mode (Edge AI)")
-        llm = OllamaLLM(model="llama3.2:1b") 
-        st.sidebar.success("Local Engine Ready ✅")
-    except ImportError:
-        st.sidebar.error("Run: pip install langchain-ollama")
+# --- 3. SYSTEM INITIALIZATION ---
+st.sidebar.title("🤖 AInsights System")
+
+try:
+    llm = OllamaLLM(model="llama3.2:1b")
+    st.sidebar.success("● Brain: Llama 3.2 (Online)")
+except Exception:
+    llm = None
+    st.sidebar.error("● Brain: Offline (Ollama needed)")
 
 st.sidebar.markdown("---")
 
-# --- MAIN DASHBOARD ---
-st.title("📊 AInsights: Executive Dashboard")
+# --- 4. SIDEBAR: AGENT A (THE DATA ENGINEER) ---
+st.sidebar.header("📂 Agent A: Ingestion")
+uploaded_data = st.sidebar.file_uploader(
+    "Upload Raw Data", 
+    type=['csv', 'xlsx', 'json', 'txt', 'pdf', 'html', 'xml'],
+    help="Agent A accepts multi-format files and cleans them without renaming columns."
+)
 
-# Load Data
-@st.cache_data
-def load_data():
-    return pd.read_csv('data/sales_data.csv')
-
-try:
-    df = load_data()
-
-    # --- 2. SLICERS ---
-    st.sidebar.subheader("Filters")
-    region_options = ["All"] + list(df['Region'].unique())
-    selected_region = st.sidebar.selectbox("Filter by Region:", region_options)
-
-    product_options = ["All"] + list(df['Product'].unique())
-    selected_product = st.sidebar.selectbox("Filter by Product:", product_options)
-
-    # Apply Filters
-    df_filtered = df.copy()
-    if selected_region != "All":
-        df_filtered = df_filtered[df_filtered['Region'] == selected_region]
-    if selected_product != "All":
-        df_filtered = df_filtered[df_filtered['Product'] == selected_product]
-
-    # --- LAYOUT ---
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        st.subheader(f"📈 Market Overview ({selected_region})")
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Revenue", f"${df_filtered['Sales'].sum():,}")
-        k2.metric("Avg. Sale", f"${int(df_filtered['Sales'].mean())}")
-        k3.metric("Profit", f"${df_filtered['Profit'].sum():,}")
+if uploaded_data and st.sidebar.button("▶ Start Engineering Pipeline"):
+    with st.spinner("Agent A is cleaning and indexing..."):
+        engineer = AgentA_Engineer(llm_engine=llm)
+        clean_df, logs = engineer.run(uploaded_data)
         
-        tab1, tab2 = st.tabs(["Trend", "Category"])
-        with tab1:
-            st.line_chart(df_filtered.set_index('Date')['Sales'])
-        with tab2:
-            st.bar_chart(df_filtered.groupby('Product')['Sales'].sum())
+        if clean_df is not None:
+            st.session_state.data = clean_df
+            st.session_state.engineer_logs = logs
+            
+            # --- FEED THE BRAIN ---
+            # Automatically find the most recent file saved by Agent A in /data
+            list_of_files = glob.glob('data/cleaned_data_*.csv') 
+            if list_of_files:
+                latest_file = max(list_of_files, key=os.path.getctime)
+                rag_status = process_cleaned_csv(latest_file)
+                st.sidebar.success(rag_status)
+            
+            st.sidebar.toast("Agent A: Pipeline & Indexing Success!", icon="✅")
 
-    with col2:
-        st.subheader("🤖 AI Analyst")
-        query = st.text_input("Input Query:", placeholder="Why are sales high?")
-        
-        if st.button("Generate Insight"):
-            if not query:
-                st.warning("Enter a question.")
-            elif not llm:
-                st.error("Configure Model first.")
+# Sidebar Knowledge Base (For RAG)
+st.sidebar.markdown("---")
+st.sidebar.header("🧠 Knowledge Base")
+uploaded_doc = st.sidebar.file_uploader("Upload PDF Reports", type=['pdf', 'txt'])
+if uploaded_doc:
+    with st.spinner("Updating RAG Memory..."):
+        msg = process_uploaded_file(uploaded_doc)
+        st.sidebar.info(msg)
+
+# Show Engineer's Reasoning
+if st.session_state.engineer_logs:
+    with st.sidebar.expander("Agent A: Reasoning & Logs"):
+        for log in st.session_state.engineer_logs:
+            st.write(log)
+
+# --- 5. MAIN DASHBOARD: AGENT B (THE VISUALIZER) ---
+st.title("📊 Executive Agentic Dashboard")
+
+if st.session_state.data is not None:
+    st.markdown("### 👁️ Agent B: Visual Analysis")
+    visualizer = AgentB_Visualizer(st.session_state.data)
+    visualizer.render_overview()
+    
+    st.markdown("---")
+
+    # --- 6. AGENT C (THE REASONING ANALYST) ---
+    st.markdown("### 🧠 Agent C: Senior Analyst")
+    st.caption("Analyzing live data + document context in real-time.")
+
+    chat_box = st.container(border=True)
+    
+    with chat_box:
+        for q, a in st.session_state.chat_history:
+            with st.chat_message("user"): st.write(q)
+            with st.chat_message("assistant", avatar="🧠"): st.write(a)
+
+        user_query = st.chat_input("Ask a question about your business trends...")
+
+        if user_query:
+            with st.chat_message("user"): st.write(user_query)
+            
+            if llm:
+                with st.chat_message("assistant", avatar="🧠"):
+                    with st.spinner("Synthesizing reasoning..."):
+                        analyst = AgentC_Analyst(llm, st.session_state.data)
+                        response = analyst.get_response(user_query, st.session_state.chat_history)
+                        st.write(response)
+                        st.session_state.chat_history.append((user_query, response))
+                        st.rerun() 
             else:
-                with st.spinner("Analyzing..."):
-                    try:
-                        # 1. RETRIEVE
-                        retriever = get_retriever()
-                        docs = retriever.invoke(query)
-                        
-                        # 2. PROMPT
-                        context = "\n".join([d.page_content for d in docs])
-                        prompt = f"Context: {context}\nQuestion: {query}\nAnswer:"
-                        
-                        # 3. GENERATE
-                        response = llm.invoke(prompt)
-                        st.info(response)
-                            
-                    except Exception as e:
-                        st.error(f"Error: {e}")
+                st.error("Agent C cannot think: LLM is not connected.")
 
-except FileNotFoundError:
-    st.error("Run 'python src/generate_data.py'")
+else:
+    st.info("👋 Welcome to AInsights. Please upload a file via the sidebar to activate the agents.")
+    st.markdown("""
+    #### System Capabilities:
+    1. **Agent A (Engineer)**: Ingests any file type and performs deep cleaning while preserving original column names.
+    2. **Agent B (Visualizer)**: Automatically detects data types and builds grounded, interactive charts.
+    3. **Agent C (Analyst)**: Uses RAG and Live Data reasoning to explain 'Why' your business trends are changing.
+    """)

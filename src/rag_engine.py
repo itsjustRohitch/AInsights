@@ -1,34 +1,54 @@
 import os
+import pandas as pd
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.document_loaders import TextLoader
-# --- FIX: New Import Path ---
-from langchain_text_splitters import CharacterTextSplitter
+from langchain_community.document_loaders import TextLoader, PyPDFLoader, CSVLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter # Better for scaling
 
-# Setup: Use a free, local model for embeddings
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+# GPU Acceleration check
+embeddings = HuggingFaceEmbeddings(
+    model_name="all-MiniLM-L6-v2",
+    model_kwargs={'device': 'cpu'} # Change to 'cuda' if you have an NVIDIA GPU
+)
 
-def build_vector_store():
-    print("🔄 Reading market report...")
+VECTOR_DB_PATH = "vector_store"
+
+def process_cleaned_csv(file_path):
+    """Indexes Agent A's output into a persistent brain."""
+    if not os.path.exists(file_path): return "⚠️ File not found."
+    
+    loader = CSVLoader(file_path=file_path)
+    return _update_brain(loader, "CSV Data")
+
+def process_uploaded_file(uploaded_file):
+    """Indexes PDFs/Text into a persistent brain."""
+    folder = "data"
+    os.makedirs(folder, exist_ok=True)
+    file_path = os.path.join(folder, uploaded_file.name)
+    
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+
+    loader = PyPDFLoader(file_path) if uploaded_file.name.endswith(".pdf") else TextLoader(file_path)
+    return _update_brain(loader, uploaded_file.name)
+
+def _update_brain(loader, source_name):
+    """Rebuilds/Updates FAISS index with smarter chunking for speed."""
     try:
-        # Load your text data
-        loader = TextLoader('data/market_report.txt')
         documents = loader.load()
+        # Recursive splitter is faster and handles larger context better
+        splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=100)
+        docs = splitter.split_documents(documents)
 
-        # Split text into chunks
-        text_splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-        docs = text_splitter.split_documents(documents)
-
-        print("🧠 Memorizing data (Creating Vector Store)...")
         db = FAISS.from_documents(docs, embeddings)
-        db.save_local("vector_store")
-        print("✅ Success: AI Memory saved to 'vector_store' folder!")
+        db.save_local(VECTOR_DB_PATH) # Persistent save
+        return f"✅ Brain Indexed: {source_name}"
     except Exception as e:
-        print(f"❌ Error: {e}")
+        return f"❌ Indexing Error: {str(e)}"
 
 def get_retriever():
-    db = FAISS.load_local("vector_store", embeddings, allow_dangerous_deserialization=True)
-    return db.as_retriever(search_kwargs={"k": 3})
-
-if __name__ == "__main__":
-    build_vector_store()
+    """Loads the brain from disk instantly."""
+    if os.path.exists(VECTOR_DB_PATH):
+        db = FAISS.load_local(VECTOR_DB_PATH, embeddings, allow_dangerous_deserialization=True)
+        return db.as_retriever(search_kwargs={"k": 5}) # 'k' sets how much info Agent C sees
+    return None
