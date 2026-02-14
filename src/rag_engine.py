@@ -3,12 +3,11 @@ import pandas as pd
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.document_loaders import TextLoader, PyPDFLoader, CSVLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter # Better for scaling
+from langchain_text_splitters import RecursiveCharacterTextSplitter 
 
-# GPU Acceleration check
 embeddings = HuggingFaceEmbeddings(
     model_name="all-MiniLM-L6-v2",
-    model_kwargs={'device': 'cpu'} # Change to 'cuda' if you have an NVIDIA GPU
+    model_kwargs={'device': 'cpu'} 
 )
 
 VECTOR_DB_PATH = "vector_store"
@@ -36,12 +35,11 @@ def _update_brain(loader, source_name):
     """Rebuilds/Updates FAISS index with smarter chunking for speed."""
     try:
         documents = loader.load()
-        # Recursive splitter is faster and handles larger context better
         splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=100)
         docs = splitter.split_documents(documents)
 
         db = FAISS.from_documents(docs, embeddings)
-        db.save_local(VECTOR_DB_PATH) # Persistent save
+        db.save_local(VECTOR_DB_PATH) 
         return f"✅ Brain Indexed: {source_name}"
     except Exception as e:
         return f"❌ Indexing Error: {str(e)}"
@@ -50,5 +48,5 @@ def get_retriever():
     """Loads the brain from disk instantly."""
     if os.path.exists(VECTOR_DB_PATH):
         db = FAISS.load_local(VECTOR_DB_PATH, embeddings, allow_dangerous_deserialization=True)
-        return db.as_retriever(search_kwargs={"k": 5}) # 'k' sets how much info Agent C sees
+        return db.as_retriever(search_kwargs={"k": 5}) 
     return None

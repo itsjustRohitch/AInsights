@@ -19,8 +19,6 @@ class AgentB_Visualizer:
         self.categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
         self.date_cols = df.select_dtypes(include=['datetime', 'datetimetz']).columns.tolist()
         
-        # Heuristic: Try to find columns that look like dates but aren't typed yet
-        # (In case Agent A missed one, though Agent A is pretty good now)
         if not self.date_cols:
             for col in self.categorical_cols:
                 if 'date' in col.lower() or 'time' in col.lower():
@@ -32,12 +30,10 @@ class AgentB_Visualizer:
                         pass
 
     def render_overview(self):
-        """Main render loop."""
         if self.df is None or self.df.empty:
             st.warning("Agent B: DataFrame is empty. Nothing to visualize.")
             return
 
-        # 1. STRATEGY REPORT (Agent Explains itself)
         with st.expander("👁️ Agent B: Visualization Strategy", expanded=False):
             st.write(f"**Detected Structure:**")
             st.write(f"- 🔢 **Metrics (Numeric):** {self.numeric_cols}")
@@ -52,16 +48,13 @@ class AgentB_Visualizer:
             for step in strategy:
                 st.write(step)
 
-        # 2. KPI SECTION
         if self.numeric_cols:
             st.subheader("📊 Key Metrics")
-            # Create up to 4 columns for KPIs
             cols = st.columns(min(len(self.numeric_cols), 4))
             for i, col_name in enumerate(self.numeric_cols[:4]):
                 total = self.df[col_name].sum()
                 avg = self.df[col_name].mean()
                 
-                # Smart formatting
                 if total > 1_000_000: fmt_total = f"{total/1_000_000:.1f}M"
                 elif total > 1_000: fmt_total = f"{total/1_000:.1f}K"
                 else: fmt_total = f"{total:,.0f}"
@@ -69,19 +62,15 @@ class AgentB_Visualizer:
                 cols[i].metric(label=col_name, value=fmt_total, delta=f"Avg: {avg:,.0f}")
             st.markdown("---")
 
-        # 3. DYNAMIC CHARTING
-        # We split the layout: Left (Trends/Big Charts), Right (Breakdowns)
         c1, c2 = st.columns([2, 1])
 
-        # --- LEFT COLUMN: TRENDS ---
         with c1:
             if self.date_cols and self.numeric_cols:
-                date_col = self.date_cols[0] # Use primary date
-                metric_col = self.numeric_cols[0] # Use primary metric
+                date_col = self.date_cols[0] 
+                metric_col = self.numeric_cols[0] 
                 
                 st.subheader(f"📈 {metric_col} Over Time")
                 
-                # Aggregation for cleaner charts
                 chart_df = self.df.groupby(date_col)[metric_col].sum().reset_index()
                 
                 line = alt.Chart(chart_df).mark_line(point=True).encode(
@@ -93,7 +82,6 @@ class AgentB_Visualizer:
                 st.altair_chart(line, use_container_width=True)
             
             elif self.categorical_cols and self.numeric_cols:
-                # If no date, show a big Bar Chart instead
                 cat_col = self.categorical_cols[0]
                 metric_col = self.numeric_cols[0]
                 
@@ -106,10 +94,8 @@ class AgentB_Visualizer:
                 ).properties(height=350).interactive()
                 st.altair_chart(bar, use_container_width=True)
 
-        # --- RIGHT COLUMN: BREAKDOWNS ---
         with c2:
             if len(self.categorical_cols) > 0 and self.numeric_cols:
-                # Pick the second categorical col if available, else the first
                 cat_col = self.categorical_cols[1] if len(self.categorical_cols) > 1 else self.categorical_cols[0]
                 metric_col = self.numeric_cols[0]
 
@@ -121,7 +107,6 @@ class AgentB_Visualizer:
                 ).properties(height=350)
                 st.altair_chart(pie, use_container_width=True)
 
-        # 4. ADVANCED: HEATMAPS (If we have enough dimensions)
         if len(self.categorical_cols) >= 2 and self.numeric_cols:
             st.markdown("---")
             st.subheader("🔥 Interaction Heatmap")
@@ -140,7 +125,6 @@ class AgentB_Visualizer:
             st.altair_chart(heatmap, use_container_width=True)
 
         elif len(self.numeric_cols) >= 2:
-             # Correlation Scatter Plot if we lack categories for heatmap
             st.markdown("---")
             st.subheader("🔗 Correlation Analysis")
             

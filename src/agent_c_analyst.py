@@ -17,9 +17,7 @@ class AgentC_Analyst:
         self.retriever = get_retriever()
 
     def _generate_data_brief(self):
-        """Calculates a high-level statistical summary for the AI's short-term memory."""
         try:
-            # Identify numeric and categorical columns
             num_cols = self.df.select_dtypes(include=['number']).columns.tolist()
             cat_cols = self.df.select_dtypes(include=['object']).columns.tolist()
             
@@ -40,7 +38,6 @@ class AgentC_Analyst:
         if self.llm is None:
             return "Agent C: Brain offline."
 
-        # 1. RETRIEVE DOCUMENT CONTEXT
         context_docs = "NO DOCUMENT CONTEXT AVAILABLE."
         if self.retriever:
             try:
@@ -48,10 +45,8 @@ class AgentC_Analyst:
                 context_docs = "\n".join([d.page_content for d in docs])
             except: pass
 
-        # 2. DATA CONTEXT
         data_context = self._generate_data_brief()
 
-        # 3. THE STRICT GROUNDING PROMPT
         prompt = f"""
         [STRICT INSTRUCTION]: 
         You are Agent C. You MUST only answer based on the PROVIDED DATA and DOCUMENTS below.

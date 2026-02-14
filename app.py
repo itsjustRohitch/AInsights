@@ -1,16 +1,15 @@
 import streamlit as st
 import pandas as pd
-import os      # FIXED: Added missing import
-import glob    # FIXED: Added missing import
+import os      
+import glob   
 from langchain_ollama import OllamaLLM
 
-# Import your custom Agents from the src folder
 from src.agent_a_engineer import AgentA_Engineer
 from src.agent_b_visualizer import AgentB_Visualizer
 from src.agent_c_analyst import AgentC_Analyst
 from src.rag_engine import process_uploaded_file, process_cleaned_csv
 
-# --- 1. PAGE CONFIGURATION ---
+#1. PAGE CONFIGURATION
 st.set_page_config(
     page_title="AInsights: Agentic Intelligence",
     page_icon="🤖",
@@ -18,12 +17,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. SESSION STATE MANAGEMENT ---
+#2. SESSION STATE MANAGEMENT
 if 'data' not in st.session_state: st.session_state.data = None
 if 'engineer_logs' not in st.session_state: st.session_state.engineer_logs = []
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 
-# --- 3. SYSTEM INITIALIZATION ---
+#3. SYSTEM INITIALIZATION
 st.sidebar.title("🤖 AInsights System")
 
 try:
@@ -35,7 +34,7 @@ except Exception:
 
 st.sidebar.markdown("---")
 
-# --- 4. SIDEBAR: AGENT A (THE DATA ENGINEER) ---
+#4. SIDEBAR: AGENT A (THE DATA ENGINEER)
 st.sidebar.header("📂 Agent A: Ingestion")
 uploaded_data = st.sidebar.file_uploader(
     "Upload Raw Data", 
@@ -52,8 +51,6 @@ if uploaded_data and st.sidebar.button("▶ Start Engineering Pipeline"):
             st.session_state.data = clean_df
             st.session_state.engineer_logs = logs
             
-            # --- FEED THE BRAIN ---
-            # Automatically find the most recent file saved by Agent A in /data
             list_of_files = glob.glob('data/cleaned_data_*.csv') 
             if list_of_files:
                 latest_file = max(list_of_files, key=os.path.getctime)
@@ -77,7 +74,7 @@ if st.session_state.engineer_logs:
         for log in st.session_state.engineer_logs:
             st.write(log)
 
-# --- 5. MAIN DASHBOARD: AGENT B (THE VISUALIZER) ---
+# 5. MAIN DASHBOARD: AGENT B (THE VISUALIZER)
 st.title("📊 Executive Agentic Dashboard")
 
 if st.session_state.data is not None:
@@ -87,7 +84,7 @@ if st.session_state.data is not None:
     
     st.markdown("---")
 
-    # --- 6. AGENT C (THE REASONING ANALYST) ---
+    # 6. AGENT C (THE REASONING ANALYST)
     st.markdown("### 🧠 Agent C: Senior Analyst")
     st.caption("Analyzing live data + document context in real-time.")
 
