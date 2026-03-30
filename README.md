@@ -33,6 +33,7 @@ AInsights is built on a modular **"Separation of Concerns"** architecture where 
 - **Local-First Architecture:** 100% data privacy and zero API costs.
 - **Persistent RAG Engine:** Uses HuggingFace (`all-MiniLM-L6-v2`) embeddings to index thousands of data rows and document pages into a local FAISS vector store.
 - **Optimized Ingestion:** Features recursive character splitting for faster indexing of large-scale CSVs and complex PDF reports.
+- **Containerized & Service-Oriented Design:** Built with a forward-looking architecture that supports Docker-based deployment and a gradual transition toward loosely coupled microservices for improved scalability and maintainability.
 
 ---
 
@@ -42,6 +43,7 @@ AInsights is built on a modular **"Separation of Concerns"** architecture where 
 
 - Python 3.10+
 - **Ollama:** [Install Ollama](https://ollama.com/) and pull the model:
+
   ```bash
   ollama run llama3.2:1b
   ```
@@ -51,7 +53,7 @@ AInsights is built on a modular **"Separation of Concerns"** architecture where 
 1. **Clone the Repository:**
 
    ```bash
-   git clone [https://github.com/itsjustRohitch/AInsights.git](https://github.com/itsjustRohitch/AInsights.git)
+   git clone https://github.com/itsjustRohitch/AInsights.git
    cd AInsights
    ```
 
@@ -62,6 +64,7 @@ AInsights is built on a modular **"Separation of Concerns"** architecture where 
    ```
 
 3. **Run the System:**
+
    ```bash
    streamlit run app.py
    ```
@@ -73,6 +76,8 @@ AInsights is built on a modular **"Separation of Concerns"** architecture where 
 - **Multi-Modal Ingestion:** Support for image-based receipts and charts.
 - **Distributed Vector Storage:** Moving from FAISS to **Qdrant** for enterprise-scale indexing.
 - **Agent Autonomy:** Allowing Agent A to automatically suggest new metrics based on detected data anomalies.
+- **Containerization Support:** Introducing Docker-based deployment for easier environment setup and portability.
+- **Microservice Evolution:** Gradually decoupling agents into independent services to enable scalable, distributed execution.
 
 ---
 
