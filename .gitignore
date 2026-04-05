@@ -1,7 +1,9 @@
-venv/
+.venv/
 __pycache__/
-*.DS_Store
-vector_store/
+*.pyc
 .env
-*.pdf
-*.csv
+backend/data/
+dist/
+build/
+*.spec.bak
+*.egg-info/

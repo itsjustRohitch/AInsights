@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "ainsights"
+version = "1.0.0"
+description = "Privacy-centric local-first BI platform powered by local LLM"
+requires-python = ">=3.11"
+readme = "README.md"
+
+[project.scripts]
+ainsights-backend  = "backend.main:run"
+ainsights-frontend = "frontend.app:run"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths    = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
