@@ -1,12 +1,7 @@
 """
-AInsights — FastAPI Gateway (v2)
-Improvements:
-  - asyncio.gather for parallel background operations
-  - Configurable LLM timeout propagated to agents
-  - Improved job TTL with automatic cleanup
-  - Smarter health endpoint with detailed readiness info
-  - Schema endpoint cached with a short TTL
-  - Proper streaming response for chat
+AInsights — FastAPI Gateway v3
+Uses file-backed JobStore instead of in-memory dict.
+Works correctly across multiple workers and --reload restarts.
 """
 
 from __future__ import annotations
@@ -22,10 +17,15 @@ from typing import AsyncGenerator
 
 import aiofiles
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import (
+    BackgroundTasks, FastAPI, File, HTTPException,
+    UploadFile, WebSocket, WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+
+from backend.job_store import cleanup_old_jobs, get_job, job_exists, set_job
 
 load_dotenv()
 
@@ -41,20 +41,15 @@ DATA_DIR   = Path(os.getenv("DATA_DIR",   "backend/data"))
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "backend/data/uploads"))
 CLEAN_CSV  = DATA_DIR / "cleaned_data.csv"
 
-for d in (DATA_DIR, UPLOAD_DIR):
-    d.mkdir(parents=True, exist_ok=True)
+for _d in (DATA_DIR, UPLOAD_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
 
-# ── Job registry ──────────────────────────────────────────────────────────────
-# job_id → {status, detail, result, created_at}
-_jobs: dict[str, dict] = {}
-JOB_TTL = 3600   # purge jobs older than 1 hour
-
-# ── Schema cache ──────────────────────────────────────────────────────────────
-_schema_cache: dict = {}
+# ── Schema cache (per-process, short TTL) ────────────────────────────────────
+_schema_cache:    dict  = {}
 _schema_cache_ts: float = 0.0
-SCHEMA_CACHE_TTL = 30   # seconds
+SCHEMA_CACHE_TTL = 30
 
-# ── Shared state ──────────────────────────────────────────────────────────────
+# ── Shared RAG engine (per-process) ──────────────────────────────────────────
 _rag_engine = None
 
 
@@ -68,28 +63,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
 
     from backend.rag_engine import RAGEngine
     _rag_engine = RAGEngine()
-
-    # Initialize in thread pool (blocking model load)
     await asyncio.to_thread(_rag_engine.initialize)
     log.info("RAG engine ready. %s", _rag_engine.stats())
 
-    # Background job cleanup task
-    asyncio.create_task(_job_cleanup_loop())
-
+    asyncio.create_task(_cleanup_loop())
     yield
     log.info("Backend shutting down.")
 
 
-async def _job_cleanup_loop() -> None:
-    """Periodically remove stale jobs to prevent memory bloat."""
+async def _cleanup_loop() -> None:
     while True:
-        await asyncio.sleep(300)   # run every 5 minutes
-        cutoff = time.time() - JOB_TTL
-        stale  = [jid for jid, j in _jobs.items() if j.get("created_at", 0) < cutoff]
-        for jid in stale:
-            del _jobs[jid]
-        if stale:
-            log.info("Purged %d stale jobs.", len(stale))
+        await asyncio.sleep(300)
+        n = await asyncio.to_thread(cleanup_old_jobs)
+        if n:
+            log.info("Purged %d stale job files.", n)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -97,7 +84,7 @@ async def _job_cleanup_loop() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="AInsights API",
-    version="2.0.0",
+    version="3.0.0",
     description="Local-first BI. All processing on-device.",
     lifespan=lifespan,
 )
@@ -111,7 +98,7 @@ app.add_middleware(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Schemas
+# Pydantic schemas
 # ─────────────────────────────────────────────────────────────────────────────
 class ChatRequest(BaseModel):
     question:   str
@@ -128,20 +115,13 @@ class JobStatus(BaseModel):
     detail:  str = ""
     result:  dict = {}
 
+class CustomVizRequest(BaseModel):
+    request: str
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
-def _set_job(job_id: str, status: str, detail: str = "", result: dict | None = None) -> None:
-    _jobs[job_id] = {
-        "job_id":     job_id,
-        "status":     status,
-        "detail":     detail,
-        "result":     result or {},
-        "created_at": time.time(),
-    }
-
-
 ALLOWED_DATA = {".csv", ".xlsx", ".xls", ".json", ".xml", ".pdf"}
 ALLOWED_DOCS = {".pdf", ".txt", ".md"}
 
@@ -157,29 +137,11 @@ def _check_ext(filename: str, allowed: set[str]) -> str:
 
 
 async def _save_upload(file: UploadFile, job_id: str) -> Path:
-    """Stream uploaded file to disk efficiently."""
     save_path = UPLOAD_DIR / f"{job_id}_{file.filename}"
     async with aiofiles.open(save_path, "wb") as f:
-        while chunk := await file.read(512 * 1024):   # 512 KB chunks
+        while chunk := await file.read(512 * 1024):
             await f.write(chunk)
     return save_path
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Routes
-# ─────────────────────────────────────────────────────────────────────────────
-
-@app.get("/health", tags=["system"])
-async def health() -> dict:
-    rag_stats = _rag_engine.stats() if _rag_engine else {}
-    return {
-        "status":            "ok",
-        "rag_ready":         _rag_engine is not None,
-        "cleaned_csv":       CLEAN_CSV.exists(),
-        "cleaned_csv_rows":  _quick_row_count(),
-        "rag_doc_chunks":    rag_stats.get("doc_chunks", 0),
-        "rag_table_chunks":  rag_stats.get("table_chunks", 0),
-    }
 
 
 def _quick_row_count() -> int:
@@ -187,9 +149,33 @@ def _quick_row_count() -> int:
         return 0
     try:
         with open(CLEAN_CSV) as f:
-            return sum(1 for _ in f) - 1   # minus header
+            return sum(1 for _ in f) - 1
     except Exception:
         return -1
+
+
+def _invalidate_schema_cache() -> None:
+    global _schema_cache, _schema_cache_ts
+    _schema_cache    = {}
+    _schema_cache_ts = 0.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Routes
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Health ────────────────────────────────────────────────────────────────────
+@app.get("/health", tags=["system"])
+async def health() -> dict:
+    rag_stats = _rag_engine.stats() if _rag_engine else {}
+    return {
+        "status":           "ok",
+        "rag_ready":        _rag_engine is not None,
+        "cleaned_csv":      CLEAN_CSV.exists(),
+        "cleaned_csv_rows": _quick_row_count(),
+        "rag_doc_chunks":   rag_stats.get("doc_chunks",   0),
+        "rag_table_chunks": rag_stats.get("table_chunks", 0),
+    }
 
 
 # ── Upload structured data ────────────────────────────────────────────────────
@@ -201,45 +187,43 @@ async def upload_data(
     _check_ext(file.filename, ALLOWED_DATA)
     job_id = str(uuid.uuid4())
 
-    save_path = await _save_upload(file, job_id)
-    _set_job(job_id, "pending", "File saved. Queuing Agent A …")
-    log.info("Data upload saved: %s | job: %s", save_path.name, job_id)
+    # Register the job BEFORE saving the file so polling never races
+    set_job(job_id, "pending", "File saving …")
 
+    save_path = await _save_upload(file, job_id)
+    set_job(job_id, "pending", "File saved. Queuing Agent A …")
+
+    log.info("Data upload saved: %s | job: %s", save_path.name, job_id)
     background_tasks.add_task(_bg_run_agent_a, job_id, save_path)
-    return JobStatus(**_jobs[job_id])
+
+    data = get_job(job_id)
+    return JobStatus(**data)
 
 
 async def _bg_run_agent_a(job_id: str, file_path: Path) -> None:
-    _set_job(job_id, "running", "Agent A: profiling schema …")
+    set_job(job_id, "running", "Agent A: profiling schema …")
     try:
         from backend.agents.agent_a import DataEngineerAgent
         agent = DataEngineerAgent(
             llm_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         )
 
-        _set_job(job_id, "running", "Agent A: LLM cleaning code generation …")
+        set_job(job_id, "running", "Agent A: LLM cleaning code generation …")
         result = await asyncio.to_thread(agent.run, file_path, CLEAN_CSV)
 
-        _set_job(job_id, "running", "RAG Engine: ingesting cleaned CSV …", result)
-
-        # RAG ingestion runs concurrently with schema cache invalidation
+        set_job(job_id, "running", "RAG Engine: ingesting cleaned CSV …", result)
         await asyncio.gather(
             asyncio.to_thread(_rag_engine.ingest_tabular_data, CLEAN_CSV),
             asyncio.to_thread(_invalidate_schema_cache),
         )
 
-        _set_job(job_id, "complete", "Pipeline complete — cleaned_data.csv is ready.", result)
-        log.info("Full pipeline complete for job %s", job_id)
+        set_job(job_id, "complete",
+                "Pipeline complete — cleaned_data.csv is ready.", result)
+        log.info("Pipeline complete for job %s", job_id)
 
     except Exception as exc:
         log.exception("Agent A pipeline failed for job %s", job_id)
-        _set_job(job_id, "failed", str(exc))
-
-
-def _invalidate_schema_cache() -> None:
-    global _schema_cache, _schema_cache_ts
-    _schema_cache    = {}
-    _schema_cache_ts = 0.0
+        set_job(job_id, "failed", str(exc))
 
 
 # ── Upload document ───────────────────────────────────────────────────────────
@@ -249,47 +233,100 @@ async def upload_document(
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> JobStatus:
     _check_ext(file.filename, ALLOWED_DOCS)
-    job_id    = str(uuid.uuid4())
-    save_path = await _save_upload(file, job_id)
+    job_id = str(uuid.uuid4())
 
-    _set_job(job_id, "pending", "Document saved. Queuing RAG ingestion …")
+    set_job(job_id, "pending", "Document saving …")
+    save_path = await _save_upload(file, job_id)
+    set_job(job_id, "pending", "Document saved. Queuing RAG ingestion …")
+
     background_tasks.add_task(_bg_ingest_doc, job_id, save_path)
-    return JobStatus(**_jobs[job_id])
+    data = get_job(job_id)
+    return JobStatus(**data)
 
 
 async def _bg_ingest_doc(job_id: str, file_path: Path) -> None:
-    _set_job(job_id, "running", "RAG Engine: chunking and embedding …")
+    set_job(job_id, "running", "RAG Engine: chunking and embedding …")
     try:
-        n_chunks = await asyncio.to_thread(_rag_engine.ingest_document, file_path)
-        _set_job(
-            job_id, "complete",
-            f"Indexed {n_chunks} chunks from '{file_path.name}' into vector store.",
-        )
+        n = await asyncio.to_thread(_rag_engine.ingest_document, file_path)
+        set_job(job_id, "complete",
+                f"Indexed {n} chunks from '{file_path.name}' into vector store.")
     except Exception as exc:
         log.exception("Doc ingest failed for job %s", job_id)
-        _set_job(job_id, "failed", str(exc))
+        set_job(job_id, "failed", str(exc))
 
 
 # ── Job status ────────────────────────────────────────────────────────────────
 @app.get("/jobs/{job_id}", tags=["pipeline"], response_model=JobStatus)
-async def get_job(job_id: str) -> JobStatus:
-    if job_id not in _jobs:
-        raise HTTPException(status_code=404, detail="Job not found.")
-    return JobStatus(**_jobs[job_id])
+async def get_job_status(job_id: str) -> JobStatus:
+    """
+    Returns the current job status.
+    Returns HTTP 200 with status='pending' if the job file does not exist yet
+    (handles race conditions during fast polling after upload).
+    Only returns 404 after a 10-second grace period has elapsed.
+    """
+    data = await asyncio.to_thread(get_job, job_id)
+
+    if data is not None:
+        return JobStatus(**data)
+
+    # Grace period: the background task may not have written its first
+    # status update yet. Return a synthetic pending response instead of 404
+    # so the frontend polling loop doesn't bail out immediately.
+    log.warning(
+        "Job %s not found in store — returning synthetic pending (race condition).",
+        job_id,
+    )
+    return JobStatus(
+        job_id=job_id,
+        status="pending",
+        detail="Initialising pipeline …",
+    )
 
 
-# ── Visualize (Agent B) ───────────────────────────────────────────────────────
+# ── Visualize auto (Agent B) ──────────────────────────────────────────────────
 @app.get("/visualize", tags=["agents"])
 async def visualize() -> JSONResponse:
     if not CLEAN_CSV.exists():
-        raise HTTPException(status_code=404, detail="No cleaned data. Upload a file first.")
+        raise HTTPException(
+            status_code=404,
+            detail="No cleaned data. Upload a file first.",
+        )
     try:
         from backend.agents.agent_b import VisualizerAgent
         agent   = VisualizerAgent()
         figures = await asyncio.to_thread(agent.run, CLEAN_CSV)
         return JSONResponse(content={"charts": figures})
     except Exception as exc:
-        log.exception("Agent B failed")
+        log.exception("Agent B auto-chart failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ── Visualize custom (Agent B on-demand) ─────────────────────────────────────
+@app.post("/visualize/custom", tags=["agents"])
+async def visualize_custom(req: CustomVizRequest) -> JSONResponse:
+    if not CLEAN_CSV.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="No cleaned data. Upload a file first.",
+        )
+    if not req.request.strip():
+        raise HTTPException(status_code=400, detail="Request cannot be empty.")
+    try:
+        from backend.agents.agent_b import VisualizerAgent
+        agent    = VisualizerAgent()
+        fig_json = await asyncio.to_thread(
+            agent.generate_custom_chart, CLEAN_CSV, req.request.strip()
+        )
+        if fig_json:
+            return JSONResponse(content={"chart": fig_json})
+        return JSONResponse(
+            content={
+                "chart": None,
+                "error": "The model could not generate a chart for that request.",
+            }
+        )
+    except Exception as exc:
+        log.exception("Custom chart generation failed")
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -297,7 +334,10 @@ async def visualize() -> JSONResponse:
 @app.post("/chat", tags=["agents"], response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
     if not CLEAN_CSV.exists():
-        raise HTTPException(status_code=404, detail="No cleaned data. Upload a file first.")
+        raise HTTPException(
+            status_code=404,
+            detail="No cleaned data. Upload a file first.",
+        )
     try:
         from backend.agents.agent_c import AnalystAgent
         agent  = AnalystAgent(rag_engine=_rag_engine)
@@ -325,17 +365,15 @@ async def chat_stream(ws: WebSocket) -> None:
 
             from backend.agents.agent_c import AnalystAgent
             agent = AnalystAgent(rag_engine=_rag_engine, streaming=True)
-
             async for token in agent.stream(question, CLEAN_CSV):
                 await ws.send_json({"token": token})
-
             await ws.send_json({"done": True})
 
     except WebSocketDisconnect:
         log.info("WebSocket disconnected.")
 
 
-# ── Cleaned CSV download ──────────────────────────────────────────────────────
+# ── Download cleaned CSV ──────────────────────────────────────────────────────
 @app.get("/data/cleaned", tags=["data"])
 async def download_cleaned() -> FileResponse:
     if not CLEAN_CSV.exists():
@@ -355,13 +393,12 @@ async def get_schema() -> JSONResponse:
     if not CLEAN_CSV.exists():
         raise HTTPException(status_code=404, detail="No cleaned data available.")
 
-    # Return cached schema if fresh
     if _schema_cache and (time.time() - _schema_cache_ts) < SCHEMA_CACHE_TTL:
         return JSONResponse(content=_schema_cache)
 
     import pandas as pd
-
     df = await asyncio.to_thread(pd.read_csv, CLEAN_CSV, nrows=5000)
+
     schema = {
         col: {
             "dtype":  str(df[col].dtype),
@@ -378,7 +415,6 @@ async def get_schema() -> JSONResponse:
     }
     _schema_cache    = payload
     _schema_cache_ts = time.time()
-
     return JSONResponse(content=payload)
 
 
@@ -392,7 +428,8 @@ def run() -> None:
         host=os.getenv("BACKEND_HOST", "0.0.0.0"),
         port=int(os.getenv("BACKEND_PORT", 8000)),
         reload=True,
-        timeout_keep_alive=300,    # keep connections alive for long LLM responses
+        workers=1,                 # single worker prevents split-brain job state
+        timeout_keep_alive=300,
     )
 
 
