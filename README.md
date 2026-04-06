@@ -81,4 +81,4 @@ AInsights is built on a modular **"Separation of Concerns"** architecture where 
 
 ---
 
-> **Privacy Note:** AInsights is designed for strict data sovereignty. No data ever leaves your local environment.
+> **Privacy Note:** AInsights is designed for strict data sovereignty. No data ever leaves your local environment and secure.
