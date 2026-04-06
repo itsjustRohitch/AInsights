@@ -1,262 +1,244 @@
-import streamlit as st
-import pandas as pd
-import os
-import glob
-from langchain_ollama import OllamaLLM
+from __future__ import annotations
 
-from src.agent_a_engineer import AgentA_Engineer
-from src.agent_b_visualizer import AgentB_Visualizer
-from src.agent_c_analyst import AgentC_Analyst
-from src.rag_engine import process_uploaded_file, process_cleaned_csv
+import json
+import tempfile
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+
+from core.llm_client import OllamaClient
+from core.orchestrator import Orchestrator
+
 
 st.set_page_config(
-    page_title="AInsights | Agentic Intelligence",
-    page_icon="⚡",
+    page_title="AInsights",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
 
-    html, body, [data-testid="stAppViewContainer"] {
-        background-color: #0B0E14;
-        color: #E2E8F0;
-        font-family: 'Inter', sans-serif;
-    }
-
-    [data-testid="block-container"] {
-        padding-top: 2rem !important;
-        padding-bottom: 1rem !important;
-    }
-
-    [data-testid="stSidebarUserContent"] {
-        padding-top: 0rem !important;
-        padding-bottom: 1rem !important;
-    }
-
-    [data-testid="stSidebar"] {
-        background-color: #06080C !important;
-        border-right: 1px solid #1E293B;
-    }
-
-    .sb-ingestion { color: #00F2FE; font-weight: 800; text-transform: uppercase; font-size: 0.85rem; letter-spacing: 1.2px; }
-    .sb-rag { color: #A855F7; font-weight: 800; text-transform: uppercase; font-size: 0.85rem; letter-spacing: 1.2px; }
-
-    .brand-text {
-        background: linear-gradient(135deg, #00F2FE 0%, #7C3AED 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-weight: 800;
-        letter-spacing: -1.5px;
-    }
-
-    .agent-card {
-        background: rgba(30, 41, 59, 0.4);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        padding: 20px;
-        border-radius: 16px;
-        margin-bottom: 0px;
-        transition: transform 0.2s ease;
-        height: 100%;
-    }
-    
-    .agent-card:hover {
-        border: 1px solid rgba(0, 242, 254, 0.3);
-        transform: translateY(-2px);
-    }
-
-    .stButton>button {
-        background: linear-gradient(90deg, #1E293B, #0F172A);
-        color: #00F2FE;
-        border: 1px solid rgba(0, 242, 254, 0.4);
-        border-radius: 8px;
-        font-weight: 600;
-        height: 3em;
-    }
-
-    .stTabs [aria-selected="true"] {
-        color: #00F2FE !important;
-        border-bottom: 2px solid #00F2FE !important;
-    }
-
-    [data-testid="stMetric"] {
-        background: rgba(15, 23, 42, 0.5);
-        padding: 15px;
-        border-radius: 12px;
-        border: 1px solid #1E293B;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-if 'data' not in st.session_state: st.session_state.data = None
-if 'engineer_logs' not in st.session_state: st.session_state.engineer_logs = []
-if 'chat_history' not in st.session_state: st.session_state.chat_history = []
-
-with st.sidebar:
-    st.markdown("""
-        <h1 style='font-size: 2rem; margin-top: 0; margin-bottom: 0;'><span class='brand-text'>⚡ AInsights</span></h1>
-        <p style='font-size: 0.95rem; color: #94A3B8; margin-top: -5px; margin-bottom: 15px;'>
-            Autonomous Agentic BI System
-        </p>
-    """, unsafe_allow_html=True)
-
-    try:
-        llm = OllamaLLM(model="llama3.2:1b")
-        status_color = "#10B981"
-        status_text = "Llama 3.2 Online"
-    except Exception:
-        llm = None
-        status_color = "#EF4444"
-        status_text = "Brain Offline"
-
-    st.markdown(f"""
-        <div style='padding: 8px 12px; border-radius: 8px; border: 1px solid #1E293B; background: #0F172A; margin-bottom: 15px;'>
-            <span style='color: {status_color};'>●</span> 
-            <span style='font-size: 0.8rem; color: #E2E8F0; font-weight: 600;'>{status_text}</span>
-        </div>
-        <hr style='border-color: rgba(255,255,255,0.1); margin: 0 0 15px 0;'>
-        <p class="sb-ingestion" style="margin-bottom: 2px;">Ingestion Engine</p>
-        <p style="font-size: 0.75rem; color: #64748B; margin-top: 0; margin-bottom: 10px;">Upload raw data for automated cleaning and profiling.</p>
-    """, unsafe_allow_html=True)
-
-    uploaded_data = st.file_uploader(
-        "Upload Raw Data", 
-        type=['csv', 'xlsx', 'json', 'txt', 'pdf', 'html', 'xml'], 
-        label_visibility="collapsed",
-        help="Agent A accepts multi-format files and cleans them without renaming columns."
+@st.cache_resource
+def get_llm_client() -> OllamaClient:
+    return OllamaClient(
+        base_url="http://localhost:11434",
+        model="qwen2.5:1.5b-instruct",
+        timeout=300,
     )
 
-    if uploaded_data and st.button("Run Triple-Agent Relay", use_container_width=True):
-        with st.status("Agent A is cleaning and indexing...", expanded=False) as status:
-            engineer = AgentA_Engineer(llm_engine=llm)
-            clean_df, logs = engineer.run(uploaded_data)
-            
-            if clean_df is not None:
-                st.session_state.data = clean_df
-                st.session_state.engineer_logs = logs
-                
-                list_of_files = glob.glob('data/cleaned_data_*.csv') 
-                if list_of_files:
-                    latest_file = max(list_of_files, key=os.path.getctime)
-                    rag_status = process_cleaned_csv(latest_file)
-                    st.success(rag_status)
-                
-                status.update(label="Engineering Finalized", state="complete")
-                st.toast("Agent A: Pipeline & Indexing Success!")
 
-    if st.session_state.engineer_logs:
-        with st.expander("Agent A: Reasoning & Logs"):
-            for log in st.session_state.engineer_logs:
-                st.write(log)
+@st.cache_data(show_spinner=False)
+def load_dataframe_from_bytes(file_bytes: bytes, file_name: str) -> pd.DataFrame:
+    suffix = Path(file_name).suffix.lower()
 
-    st.markdown("""
-        <hr style='border-color: rgba(255,255,255,0.1); margin: 20px 0 15px 0;'>
-        <p class="sb-rag" style="margin-bottom: 2px;">RAG Memory</p>
-        <p style="font-size: 0.75rem; color: #64748B; margin-top: 0; margin-bottom: 10px;">Upload PDF reports to inject knowledge into FAISS.</p>
-    """, unsafe_allow_html=True)
-    
-    uploaded_doc = st.file_uploader("Upload contextual files", type=['pdf', 'txt'], label_visibility="collapsed")
-    
-    if uploaded_doc:
-        with st.spinner("Updating RAG Memory..."):
-            msg = process_uploaded_file(uploaded_doc)
-            st.success(msg)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(file_bytes)
+        tmp_path = tmp.name
 
-if st.session_state.data is not None:
-    st.markdown("<h2 style='letter-spacing:-1px;'>Intelligence Dashboard</h2>", unsafe_allow_html=True)
-    
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Rows Scanned", f"{st.session_state.data.shape[0]:,}")
-    m2.metric("Features", st.session_state.data.shape[1])
-    m3.metric("Agent Status", "Grounded", delta="Ready")
+    from utils.file_reader import read_any_file
 
-    tab_viz, tab_chat = st.tabs(["VISUALIZER", "ANALYST"])
+    return read_any_file(tmp_path)
 
-    with tab_viz:
-        st.markdown("### Agent B: Visual Analysis")
-        visualizer = AgentB_Visualizer(st.session_state.data)
-        visualizer.render_overview()
-    
-    with tab_chat:
-        st.markdown("### Agent C: Senior Analyst")
-        chat_box = st.container(height=500, border=True)
-        
-        with chat_box:
-            for q, a in st.session_state.chat_history:
-                with st.chat_message("user"): st.markdown(q)
-                with st.chat_message("assistant"): st.markdown(a)
 
-        user_query = st.chat_input("Ask a question about your business trends...")
+@st.cache_data(show_spinner=False)
+def build_quality_report(df: pd.DataFrame) -> dict:
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    object_cols = [c for c in df.columns if df[c].dtype == "object"]
 
+    duplicates = int(df.duplicated().sum())
+    missing = (df.isna().mean() * 100).round(2).to_dict()
+
+    outliers = {}
+    for col in numeric_cols[:10]:
+        s = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(s) < 4:
+            continue
+        q1 = s.quantile(0.25)
+        q3 = s.quantile(0.75)
+        iqr = q3 - q1
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+        outliers[col] = int(((s < lower) | (s > upper)).sum())
+
+    return {
+        "rows": int(df.shape[0]),
+        "columns": int(df.shape[1]),
+        "duplicates": duplicates,
+        "missing_percent": missing,
+        "numeric_columns": numeric_cols,
+        "categorical_columns": object_cols,
+        "outliers_iqr": outliers,
+    }
+
+
+def init_state() -> None:
+    defaults = {
+        "orch": None,
+        "df": None,
+        "raw_df": None,
+        "engineer_report": None,
+        "visual_output": None,
+        "messages": [],
+        "file_name": None,
+        "quality_report": None,
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def ensure_orchestrator() -> Orchestrator:
+    if st.session_state.orch is None:
+        llm = get_llm_client()
+        st.session_state.orch = Orchestrator(llm)
+    return st.session_state.orch
+
+
+def render_dataset_overview(df: pd.DataFrame) -> None:
+    st.subheader("Dataset overview")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Rows", f"{df.shape[0]:,}")
+    c2.metric("Columns", f"{df.shape[1]:,}")
+    c3.metric("Missing cells", f"{int(df.isna().sum().sum()):,}")
+    c4.metric("Duplicates", f"{int(df.duplicated().sum()):,}")
+
+    st.dataframe(df.head(20), use_container_width=True)
+
+
+def render_quality_report(report: dict) -> None:
+    st.subheader("Data quality report")
+    st.json(report)
+
+
+def render_charts(visual_output) -> None:
+    st.subheader("Auto visuals")
+    if not visual_output or not visual_output.charts:
+        st.info("No chart could be generated from the current dataset.")
+        return
+
+    for idx, chart in enumerate(visual_output.charts, start=1):
+        st.altair_chart(chart, use_container_width=True)
+        st.caption(f"Chart {idx}")
+
+    if visual_output.kpis:
+        st.subheader("KPIs")
+        cols = st.columns(min(len(visual_output.kpis), 4))
+        for i, (k, v) in enumerate(visual_output.kpis.items()):
+            cols[i % len(cols)].metric(k, f"{v:.4f}" if isinstance(v, float) else str(v))
+
+    if visual_output.insights:
+        st.subheader("Insights")
+        for item in visual_output.insights:
+            st.write(f"- {item}")
+
+
+def export_buttons(df: pd.DataFrame, engineer_report: dict | None) -> None:
+    csv_data = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download cleaned CSV",
+        data=csv_data,
+        file_name="cleaned_data.csv",
+        mime="text/csv",
+    )
+
+    report_payload = json.dumps(engineer_report or {}, indent=2).encode("utf-8")
+    st.download_button(
+        "Download insights report",
+        data=report_payload,
+        file_name="insights_report.json",
+        mime="application/json",
+    )
+
+
+def main() -> None:
+    init_state()
+    orch = ensure_orchestrator()
+
+    st.title("AInsights — Local Agentic BI Platform")
+
+    with st.sidebar:
+        st.header("Upload")
+        uploaded = st.file_uploader(
+            "File",
+            type=["csv", "xlsx", "xls", "json", "txt", "pdf"],
+            accept_multiple_files=False,
+        )
+
+        st.caption("Local-only execution. One LLM. No vector database.")
+        st.caption("Model: qwen2.5:1.5b-instruct via Ollama")
+
+        if st.button("Reset session"):
+            for key in ["df", "raw_df", "engineer_report", "visual_output", "messages", "file_name", "quality_report"]:
+                st.session_state[key] = None if key != "messages" else []
+            st.rerun()
+
+    if uploaded is not None:
+        file_bytes = uploaded.getvalue()
+        if st.session_state.file_name != uploaded.name:
+            progress = st.progress(0, text="Loading file...")
+            df = load_dataframe_from_bytes(file_bytes, uploaded.name)
+            progress.progress(35, text="Cleaning with engineer agent...")
+            engineer_result = orch.engineer.clean(df)
+            progress.progress(70, text="Building retrieval memory...")
+            orch.analyst.build_memory(engineer_result.dataframe)
+            progress.progress(100, text="Ready.")
+
+            st.session_state.raw_df = df
+            st.session_state.df = engineer_result.dataframe
+            st.session_state.engineer_report = engineer_result.report
+            st.session_state.visual_output = orch.visualizer.build(engineer_result.dataframe)
+            st.session_state.quality_report = build_quality_report(engineer_result.dataframe)
+            st.session_state.file_name = uploaded.name
+
+    if st.session_state.df is None:
+        st.info("Upload a CSV, XLSX, JSON, TXT, or PDF file to start.")
+        return
+
+    df = st.session_state.df
+
+    current_view = st.radio("View", ["Overview", "Visuals", "Chat", "Export"], horizontal=True, label_visibility="collapsed")
+
+    if current_view == "Overview":
+        render_dataset_overview(df)
+        if st.session_state.quality_report:
+            render_quality_report(st.session_state.quality_report)
+
+        if st.session_state.engineer_report:
+            with st.expander("Cleaning report"):
+                st.json(st.session_state.engineer_report)
+
+    elif current_view == "Visuals":
+        render_charts(st.session_state.visual_output)
+
+    elif current_view == "Chat":
+        st.subheader("Chat with the dataset")
+        history = st.session_state.messages
+
+        for msg in history:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        user_query = st.chat_input("Ask about trends, causes, missing values, categories, or comparisons.")
         if user_query:
-            with chat_box:
-                with st.chat_message("user"): st.markdown(user_query)
-                
-                if llm:
-                    with st.chat_message("assistant"):
-                        with st.spinner("Synthesizing reasoning..."):
-                            analyst = AgentC_Analyst(llm, st.session_state.data)
-                            response = analyst.get_response(user_query, st.session_state.chat_history)
-                            st.markdown(response)
-                            st.session_state.chat_history.append((user_query, response))
-                            st.rerun()
-                else:
-                    st.error("Agent C cannot think: LLM is not connected.")
+            temp_history = history + [{"role": "user", "content": user_query}]
+            
+            with st.chat_message("user"):
+                st.markdown(user_query)
 
-else:
-    st.markdown("""
-        <div style='text-align: center; padding: 0px 0px 20px 0px;'>
-            <h1 style='font-size: 3.5rem; margin-bottom: 5px;'><span class='brand-text'>⚡ AInsights</span></h1>
-            <p style='color: #94A3B8; font-size: 1.1rem; max-width: 800px; margin: 0 auto 30px auto; line-height: 1.5;'>
-                A privacy-first BI system leveraging RAG to transform unstructured data into actionable business strategy.
-            </p>
-        </div>
-    """, unsafe_allow_html=True)
+            with st.chat_message("assistant"):
+                with st.spinner("Analyzing..."):
+                    answer, meta = orch.handle_query(df, user_query, temp_history)
+                    st.markdown(answer)
 
-    col1, col2, col3 = st.columns(3)
+                    with st.expander("Execution trace"):
+                        st.json(meta)
 
-    with col1:
-        st.markdown("""
-            <div class='agent-card'>
-                <h3 style='color: #00F2FE; margin-top: 0; margin-bottom: 5px; text-align: center;'>Agent A</h3>
-                <p style='font-size: 1rem; color: #E2E8F0; text-align: center; font-weight: 600; margin-bottom: 0;'>The Universal Data Engineer</p>
-                <hr style='border-color: rgba(255,255,255,0.1); margin: 10px 0;'>
-                <p style='font-size: 0.88rem; color: #94A3B8; margin-top: 10px; margin-bottom: 0; line-height: 1.4;'>
-                Responsible for ingestion and sanitization. Normalizes data structures and ensures clean data lineage for subsequent analysis.
-                </p>
-            </div>
-        """, unsafe_allow_html=True)
+            history.append({"role": "user", "content": user_query})
+            history.append({"role": "assistant", "content": answer})
+            st.session_state.messages = history
 
-    with col2:
-        st.markdown("""
-            <div class='agent-card'>
-                <h3 style='color: #00F2FE; margin-top: 0; margin-bottom: 5px; text-align: center;'>Agent B</h3>
-                <p style='font-size: 1rem; color: #E2E8F0; text-align: center; font-weight: 600; margin-bottom: 0;'>The Adaptive Visualizer</p>
-                <hr style='border-color: rgba(255,255,255,0.1); margin: 10px 0;'>
-                <p style='font-size: 0.88rem; color: #94A3B8; margin-top: 10px; margin-bottom: 0; line-height: 1.4;'>
-                Automatically generates interactive Exploratory Data Analysis (EDA) and KPI dashboards based on data-type heuristics.
-                </p>
-            </div>
-        """, unsafe_allow_html=True)
+    elif current_view == "Export":
+        export_buttons(df, st.session_state.engineer_report)
 
-    with col3:
-        st.markdown("""
-            <div class='agent-card'>
-                <h3 style='color: #00F2FE; margin-top: 0; margin-bottom: 5px; text-align: center;'>Agent C</h3>
-                <p style='font-size: 1rem; color: #E2E8F0; text-align: center; font-weight: 600; margin-bottom: 0;'>The Reasoning Analyst</p>
-                <hr style='border-color: rgba(255,255,255,0.1); margin: 10px 0;'>
-                <p style='font-size: 0.88rem; color: #94A3B8; margin-top: 10px; margin-bottom: 0; line-height: 1.4;'>
-                Synthesizes dashboard metrics, document knowledge, and chat history to provide strategic business reasoning using a RAG Engine.
-                </p>
-            </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("""
-        <hr style='border-color: rgba(255,255,255,0.1); margin: 30px 0 25px 0;'>
-        <div style='text-align: center; color: #FFFFFF; font-size: 1rem; font-weight: 600; letter-spacing: 0.5px;'>
-            <span style='margin-right: 8px; color: #00F2FE;'>←</span> Upload files in the sidebar to get started
-        </div>
-    """, unsafe_allow_html=True)
+if __name__ == "__main__":
+    main()

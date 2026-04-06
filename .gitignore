@@ -1,7 +1,29 @@
-venv/
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.DS_Store
-vector_store/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.venv/
 .env
-*.pdf
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# IDEs
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Application data / file uploads
 *.csv
+*.xlsx
+*.xls
+*.json
+*.pdf
+*.txt
