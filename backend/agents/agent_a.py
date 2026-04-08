@@ -1,17 +1,3 @@
-"""
-AInsights — Agent A: The Data Engineer
-=======================================
-Autonomous ETL pipeline. Accepts raw files, profiles the schema,
-uses the LLM to write cleaning code, executes it in a secure sandbox,
-and outputs a standardised cleaned_data.csv.
-
-ABSOLUTE MANDATE: Zero data destruction.
-  - Original column names are ALWAYS preserved.
-  - If LLM-generated code fails for ANY reason, the agent falls back
-    to hardcoded rule-based Pandas cleaning automatically.
-  - The output CSV is ALWAYS written, even if cleaning partially fails.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -25,261 +11,265 @@ from langchain_ollama import OllamaLLM
 
 from backend.sandbox.executor import SafeExecutor
 from backend.utils.file_parser import load_file
-from backend.utils.schema_profiler import profile
+from backend.utils.schema_profiler import compact_schema_str, profile
 
 log = logging.getLogger("ainsights.agent_a")
 
-OLLAMA_MODEL    = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
+OLLAMA_MODEL    = os.getenv("OLLAMA_MODEL",    "qwen2.5-coder:7b")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-MAX_LLM_RETRIES = 2   # attempts before falling back to rule-based cleaning
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Prompt — heavily optimised for qwen2.5-coder:7b
-# ─────────────────────────────────────────────────────────────────────────────
-_CLEANING_PROMPT = """\
-You are a senior Python data engineer. Your ONLY job is to write a Python \
-function that cleans a pandas DataFrame.
+_PROMPT = """\
+Act as a Senior Data Engineer. Analyze the schema and sample data to identify inconsistencies and formatting errors. 
+Provide a clean, robust implementation that ensures data integrity.
 
-## STRICT RULES — violating any rule causes the entire clean to be discarded:
-1. The function signature MUST be exactly: def clean(df: pd.DataFrame) -> pd.DataFrame:
-2. You MUST NOT rename, drop, or reorder any columns. Column names are sacred.
-3. You MUST NOT drop rows unless the ENTIRE row is null.
-4. Return the cleaned df at the end of the function.
-5. Use ONLY: pandas (as pd), numpy (as np), re. No other imports.
-6. Output ONLY the raw Python function. No markdown, no explanation, no ```python fences.
+Rules:
+- No imports
+- dtype must be strings
+- Keep column names unchanged
+- Last line must be: return df
 
-## DataFrame schema:
-Shape: {shape}
-Columns and types:
-{column_summary}
+Write ONLY the indented body of this function.
 
-## Cleaning operations to perform (ONLY these, in order):
-1. Strip leading/trailing whitespace from all string columns.
-2. For each column with inferred_semantic == "numeric": coerce to numeric \
-   (pd.to_numeric with errors="coerce"). Fill remaining NaN with the column median.
-3. For each column with inferred_semantic == "categorical": fill NaN with \
-   the column mode (most frequent value). Strip whitespace and title-case the values.
-4. For each column with inferred_semantic == "datetime": coerce with \
-   pd.to_datetime(errors="coerce"). Leave NaT as NaT.
-5. For columns with inferred_semantic == "id_or_text": fill NaN with empty string.
-6. Remove exact duplicate rows (keep first).
-7. Return df.
+def clean(df):
+    return df
 
-Write the function now:
+DATA:
+{schema}
+
+SAMPLE:
+{head}
 """
 
 
-def _build_column_summary(schema: dict) -> str:
-    lines = []
-    for col, meta in schema["columns"].items():
-        lines.append(
-            f"  - '{col}': dtype={meta['dtype']}, "
-            f"null_pct={meta['null_pct']}%, "
-            f"semantic={meta['inferred_semantic']}, "
-            f"sample={meta['sample_values'][:3]}"
-        )
-    return "\n".join(lines)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Agent
-# ─────────────────────────────────────────────────────────────────────────────
 class DataEngineerAgent:
-    """
-    Agent A.
-    Call agent.run(input_path, output_path) to execute the full ETL pipeline.
-    """
 
     def __init__(self, llm_base_url: str = OLLAMA_BASE_URL) -> None:
         self._llm = OllamaLLM(
             model=OLLAMA_MODEL,
             base_url=llm_base_url,
-            temperature=0.0,       # deterministic code generation
-            num_predict=1024,
+            temperature=0.0,
+            num_predict=2000,
+            request_timeout=180,
         )
         self._executor = SafeExecutor()
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────
     def run(self, input_path: Path, output_path: Path) -> dict:
-        """
-        Full ETL pipeline.
-        Returns a summary dict with cleaning stats.
-        """
         t0 = time.perf_counter()
-        log.info("Agent A starting: %s", input_path.name)
 
-        # ① Load raw data
+        log.info("Agent A: processing '%s'", input_path.name)
+
         df_raw = load_file(input_path)
         original_columns = df_raw.columns.tolist()
-        original_shape   = df_raw.shape
-        log.info("Raw data loaded: %s rows × %s cols", *original_shape)
+        original_shape = df_raw.shape
 
-        # ② Profile schema
+        log.info("Loaded: %d rows × %d cols", *original_shape)
+
         schema = profile(df_raw)
 
-        # ③ Attempt LLM-generated cleaning
-        df_clean, method = self._llm_clean(df_raw, schema)
+        df_clean, method = self._clean(df_raw.copy(), schema)
 
-        # ④ MANDATORY safety net — restore columns if any were lost/renamed
-        df_clean = self._enforce_columns(df_clean, df_raw, original_columns)
+        df_clean = self._restore_columns(df_clean, df_raw, original_columns)
 
-        # ⑤ Write output
         output_path.parent.mkdir(parents=True, exist_ok=True)
         df_clean.to_csv(output_path, index=False)
 
-        elapsed  = round(time.perf_counter() - t0, 2)
-        summary  = {
-            "input_file":       input_path.name,
-            "original_shape":   list(original_shape),
-            "cleaned_shape":    list(df_clean.shape),
-            "rows_removed":     original_shape[0] - df_clean.shape[0],
-            "null_cells_before": int(df_raw.isna().sum().sum()),
-            "null_cells_after":  int(df_clean.isna().sum().sum()),
-            "cleaning_method":  method,
-            "elapsed_seconds":  elapsed,
-            "output_path":      str(output_path),
-        }
-        log.info("Agent A complete in %.2fs via '%s'. %s", elapsed, method, summary)
-        return summary
+        elapsed = round(time.perf_counter() - t0, 2)
 
-    # ── LLM cleaning ─────────────────────────────────────────────────────────
-    def _llm_clean(
-        self, df: pd.DataFrame, schema: dict
-    ) -> tuple[pd.DataFrame, str]:
-        """
-        Ask the LLM to generate a cleaning function, then execute it in a sandbox.
-        Falls back to rule-based cleaning if the LLM fails MAX_LLM_RETRIES times.
-        """
-        col_summary = _build_column_summary(schema)
-        prompt = _CLEANING_PROMPT.format(
-            shape=schema["shape"],
-            column_summary=col_summary,
+        result = {
+            "input_file": input_path.name,
+            "original_shape": list(original_shape),
+            "cleaned_shape": list(df_clean.shape),
+            "rows_removed": original_shape[0] - df_clean.shape[0],
+            "null_cells_before": int(df_raw.isna().sum().sum()),
+            "null_cells_after": int(df_clean.isna().sum().sum()),
+            "cleaning_method": method,
+            "elapsed_seconds": elapsed,
+        }
+
+        log.info(
+            "Agent A complete in %.2fs via '%s'. Shape %s→%s, nulls %d→%d",
+            elapsed,
+            method,
+            original_shape,
+            df_clean.shape,
+            result["null_cells_before"],
+            result["null_cells_after"],
         )
 
-        for attempt in range(1, MAX_LLM_RETRIES + 1):
-            log.info("LLM cleaning attempt %d/%d …", attempt, MAX_LLM_RETRIES)
-            try:
-                raw_code = self._llm.invoke(prompt)
-                code     = self._extract_function(raw_code)
+        return result
 
-                if not code:
-                    log.warning("Attempt %d: LLM returned no valid function.", attempt)
+    # ─────────────────────────────────────────────
+    def _clean(self, df: pd.DataFrame, schema: dict):
+
+        head = schema.get("head", "")
+        if isinstance(head, str) and len(head) > 800:
+            head = head[:800] + "\n..."
+
+        prompt = _PROMPT.format(
+            schema=compact_schema_str(schema),
+            head=head,
+        )
+
+        for attempt in range(1, 3):
+            log.info("LLM cleaning attempt %d/2 …", attempt)
+
+            try:
+                raw = self._llm.invoke(prompt)
+
+                log.debug(
+                    "LLM raw output (attempt %d):\n%s",
+                    attempt,
+                    raw[:800],
+                )
+
+                if self._looks_truncated(raw):
+                    log.warning(
+                        "Attempt %d: output appears truncated. Raw tail:\n%s",
+                        attempt,
+                        raw[-200:],
+                    )
                     continue
 
-                # Run in isolated sandbox
-                df_result = self._executor.run_cleaning_function(df.copy(), code)
+                body = self._extract(raw)
 
-                # Sanity checks before accepting the result
-                if self._is_safe_result(df_result, df, schema):
+                if not body:
+                    log.warning(
+                        "Attempt %d: extraction failed. Raw output snippet:\n%s",
+                        attempt,
+                        raw[:400],
+                    )
+                    continue
+
+                full_code = "def clean(df):\n" + body
+
+                log.debug(
+                    "Executing code (attempt %d):\n%s",
+                    attempt,
+                    full_code[:800],
+                )
+
+                df_result = self._executor.run_cleaning_function(df.copy(), full_code)
+
+                ok, reason = self._safe(df_result, df)
+
+                if ok:
                     log.info("LLM cleaning accepted on attempt %d.", attempt)
                     return df_result, f"llm_attempt_{attempt}"
-                else:
-                    log.warning("Attempt %d: LLM result failed safety checks.", attempt)
 
-            except Exception as exc:
-                log.warning("Attempt %d: LLM/sandbox error: %s", attempt, exc)
+                log.warning(
+                    "Attempt %d: safety check rejected result — %s",
+                    attempt,
+                    reason,
+                )
 
-        # ── All LLM attempts failed → fall back ──────────────────────────────
-        log.warning("All LLM attempts exhausted. Falling back to rule-based cleaning.")
-        return self._rule_based_clean(df, schema), "rule_based_fallback"
+            except Exception as e:
+                log.warning("Attempt %d failed: %s", attempt, e)
 
-    def _extract_function(self, raw: str) -> str:
-        """
-        Strip markdown fences and extract only the clean() function definition.
-        qwen2.5-coder sometimes wraps output in ```python blocks.
-        """
-        # Remove markdown code fences
-        raw = re.sub(r"```(?:python)?", "", raw).strip()
+        log.warning("All LLM attempts exhausted — using rule-based fallback.")
 
-        # Find the function definition
-        match = re.search(r"(def clean\(df.*?)(?=\ndef |\Z)", raw, re.DOTALL)
-        return match.group(1).strip() if match else ""
+        return self._rule_based(df, schema), "rule_based_fallback"
 
-    def _is_safe_result(
-        self, df_result: pd.DataFrame, df_original: pd.DataFrame, schema: dict
-    ) -> bool:
-        """
-        Validate that the LLM-cleaned DataFrame is safe to use.
-        A result is REJECTED if:
-          - It has fewer columns than the original
-          - It lost more than 20% of rows (LLM shouldn't drop valid rows)
-          - It has MORE null cells than the original (cleaning made things worse)
-          - Any original column is missing
-        """
-        orig_cols = set(df_original.columns)
-        result_cols = set(df_result.columns)
+    # ─────────────────────────────────────────────
+    def _looks_truncated(self, raw: str) -> bool:
+        raw = raw.strip()
+        if not raw:
+            return True
 
-        if not orig_cols.issubset(result_cols):
-            log.warning("Safety fail: missing columns %s", orig_cols - result_cols)
-            return False
+        # Odd number of fences means an opening fence with no closing fence
+        if raw.count("```") % 2 == 1:
+            return True
 
-        row_loss_pct = 1.0 - (len(df_result) / max(len(df_original), 1))
-        if row_loss_pct > 0.20:
-            log.warning("Safety fail: %.1f%% of rows were dropped.", row_loss_pct * 100)
-            return False
+        last = raw.splitlines()[-1].strip()
 
-        nulls_before = df_original.isna().sum().sum()
-        nulls_after  = df_result.isna().sum().sum()
-        if nulls_after > nulls_before * 1.05:   # allow 5% tolerance
-            log.warning("Safety fail: null count increased from %d to %d.", nulls_before, nulls_after)
-            return False
+        # These characters genuinely indicate an incomplete statement.
+        # Removed '"' and "'" — a line ending with a closed string is valid.
+        return last.endswith(("=", ",", "(", "[", "{", ":"))
 
-        return True
+    # ─────────────────────────────────────────────
+    def _extract(self, raw: str) -> str:
+        # Remove markdown fences
+        raw = re.sub(r"```(?:python)?", "", raw)
+        raw = raw.replace("```", "")
 
-    def _enforce_columns(
-        self,
-        df_clean: pd.DataFrame,
-        df_raw: pd.DataFrame,
-        original_columns: list[str],
-    ) -> pd.DataFrame:
-        """
-        ABSOLUTE SAFETY NET.
-        Restores any missing original columns from the raw DataFrame.
-        This runs ALWAYS, even after a successful LLM clean.
-        """
-        missing = [c for c in original_columns if c not in df_clean.columns]
+        if "def clean" in raw:
+            m = re.search(r"def clean\(.*?\):(.*)", raw, re.DOTALL)
+            if m:
+                raw = m.group(1)
+
+        raw = raw.strip("\n")
+
+        if "return" not in raw:
+            log.debug("_extract: no return found.")
+            return ""
+
+        lines = raw.split("\n")
+        clean_lines = []
+
+        for ln in lines:
+            if ln.strip():
+                clean_lines.append("    " + ln.strip())
+            else:
+                clean_lines.append("")
+
+        body = "\n".join(clean_lines)
+
+        try:
+            compile("def clean(df):\n" + body, "<llm>", "exec")
+        except SyntaxError as e:
+            log.warning("_extract: SyntaxError after normalization: %s", e)
+            log.debug("Problematic body:\n%s", body[:400])
+            return ""
+
+        return body
+
+    # ─────────────────────────────────────────────
+    def _safe(self, result: pd.DataFrame, original: pd.DataFrame):
+
+        missing = set(original.columns) - set(result.columns)
         if missing:
-            log.warning("Restoring %d missing columns: %s", len(missing), missing)
-            for col in missing:
+            return False, f"missing columns: {missing}"
+
+        if len(original) > 0:
+            retention = len(result) / len(original)
+            if retention < 0.70:
+                return False, f"dropped {(1-retention)*100:.1f}% rows"
+
+        before = int(original.isna().sum().sum())
+        after = int(result.isna().sum().sum())
+
+        if before == 0:
+            if after > len(original) * len(original.columns) * 0.05:
+                return False, f"introduced too many nulls ({after})"
+        else:
+            if after > before * 1.15:
+                return False, f"nulls increased {before}→{after}"
+
+        return True, ""
+
+    # ─────────────────────────────────────────────
+    def _restore_columns(self, df_clean, df_raw, original_columns):
+        for col in original_columns:
+            if col not in df_clean.columns:
+                log.warning("Restoring missing column '%s'", col)
                 df_clean[col] = df_raw[col]
-        # Preserve original column order
         return df_clean[original_columns]
 
-    # ── Rule-based fallback cleaning ─────────────────────────────────────────
-    def _rule_based_clean(self, df: pd.DataFrame, schema: dict) -> pd.DataFrame:
-        """
-        Deterministic, hardcoded Pandas cleaning.
-        Zero LLM involvement. Guaranteed to never lose columns.
-        """
-        log.info("Running rule-based fallback cleaning …")
-        cols_meta = schema["columns"]
+    # ─────────────────────────────────────────────
+    def _rule_based(self, df: pd.DataFrame, schema: dict):
+        log.info("Rule-based cleaning started (%d cols)", len(df.columns))
 
         for col in df.columns:
-            semantic = cols_meta.get(col, {}).get("inferred_semantic", "text")
+            try:
+                # ffill() is the pandas 2.x forward-fill method.
+                # fillna(method="ffill") was deprecated in 2.1 and removed in 3.0.
+                df[col] = df[col].ffill()
+            except Exception as e:
+                log.warning("Rule-based failed for '%s': %s", col, e)
 
-            if semantic == "numeric":
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-                df[col] = df[col].fillna(df[col].median())
+        df = df.drop_duplicates().reset_index(drop=True)
 
-            elif semantic == "categorical":
-                df[col] = df[col].astype(str).str.strip().str.title()
-                mode = df[col].mode()
-                fill = mode.iloc[0] if not mode.empty else ""
-                df[col] = df[col].replace("Nan", fill).replace("", fill)
+        log.info("Rule-based cleaning complete. Output shape: %s", df.shape)
 
-            elif semantic == "datetime":
-                df[col] = pd.to_datetime(df[col], errors="coerce")
-
-            elif semantic == "id_or_text":
-                df[col] = df[col].fillna("").astype(str).str.strip()
-
-            else:   # generic string column
-                df[col] = df[col].astype(str).str.strip()
-                df[col] = df[col].replace("nan", "")
-
-        # Remove fully null rows only
-        df = df.dropna(how="all")
-        # Remove exact duplicates
-        df = df.drop_duplicates(keep="first")
-        return df.reset_index(drop=True)
+        return df

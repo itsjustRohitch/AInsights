@@ -21,6 +21,7 @@ from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 
 log = logging.getLogger("ainsights.rag")
+logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 EMBEDDING_MODEL  = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")

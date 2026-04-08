@@ -1,111 +1,167 @@
 """
-SafeExecutor — restricted Python sandbox for Agent A.
-Runs LLM-generated code with a timeout and a restricted set of allowed globals.
-Uses multiprocessing to enforce the timeout without threading issues.
+AInsights — Safe Sandbox Executor v2
+
+Replaces multiprocessing with threading.
+Rationale: multiprocessing.spawn requires the child process to re-import
+all modules — this fails silently inside uvicorn --reload because the
+module paths are not set up identically in the child. The queue returns
+empty, both LLM attempts raise RuntimeError, and we always fall back.
+
+Threading approach:
+  - No pickling / spawn issues
+  - Same restricted __builtins__ namespace
+  - Hard timeout via thread.join(timeout)
+  - Daemon thread — won't block process exit if it overruns
+  - Fully compatible with uvicorn, asyncio, and PyInstaller
 """
 
 from __future__ import annotations
 
 import logging
-import multiprocessing as mp
-import textwrap
+import re
+import threading
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 log = logging.getLogger("ainsights.sandbox")
 
-SANDBOX_TIMEOUT = 30   # seconds — kill the process if it runs longer
+SANDBOX_TIMEOUT = 60   # seconds
 
+# ── Restricted built-ins ──────────────────────────────────────────────────────
+# `object` MUST be present: LLM often writes
+#   df.select_dtypes(include=[object])
+# Without it the exec raises NameError and we silently fall back.
 
-def _worker(code: str, df_serialised: bytes, result_queue: mp.Queue) -> None:
-    """
-    Runs inside a child process. Deserialises the DataFrame, executes the
-    LLM-generated clean() function, and puts the result back on the queue.
-    """
-    import io
-    import numpy as np
-    import pandas as pd
-    import re
-
-    try:
-        df = pd.read_parquet(io.BytesIO(df_serialised))
-
-        # Restricted globals — LLM code can ONLY access these names
-        safe_globals: dict[str, Any] = {
-            "__builtins__": {
-                "len": len, "range": range, "enumerate": enumerate,
-                "zip": zip, "map": map, "filter": filter,
-                "list": list, "dict": dict, "set": set, "tuple": tuple,
-                "str": str, "int": int, "float": float, "bool": bool,
-                "print": print, "isinstance": isinstance, "type": type,
-                "abs": abs, "round": round, "min": min, "max": max,
-                "sum": sum, "sorted": sorted, "reversed": reversed,
-                "any": any, "all": all,
-            },
-            "pd": pd,
-            "np": np,
-            "re": re,
-        }
-        local_ns: dict = {}
-        exec(code, safe_globals, local_ns)   # noqa: S102
-
-        if "clean" not in local_ns:
-            result_queue.put(("error", "No 'clean' function found in generated code."))
-            return
-
-        cleaned_df = local_ns["clean"](df)
-
-        if not isinstance(cleaned_df, pd.DataFrame):
-            result_queue.put(("error", "clean() did not return a DataFrame."))
-            return
-
-        buf = io.BytesIO()
-        cleaned_df.to_parquet(buf, index=True)
-        result_queue.put(("ok", buf.getvalue()))
-
-    except Exception as exc:
-        result_queue.put(("error", str(exc)))
+_SAFE_BUILTINS: dict[str, Any] = {
+    # Core types
+    "object":     object,
+    "type":       type,
+    "bool":       bool,
+    "int":        int,
+    "float":      float,
+    "str":        str,
+    "bytes":      bytes,
+    "list":       list,
+    "dict":       dict,
+    "set":        set,
+    "tuple":      tuple,
+    "frozenset":  frozenset,
+    "None":       None,
+    "True":       True,
+    "False":      False,
+    # Iterables
+    "len":        len,
+    "range":      range,
+    "enumerate":  enumerate,
+    "zip":        zip,
+    "map":        map,
+    "filter":     filter,
+    "reversed":   reversed,
+    "sorted":     sorted,
+    "iter":       iter,
+    "next":       next,
+    # Math
+    "abs":        abs,
+    "round":      round,
+    "min":        min,
+    "max":        max,
+    "sum":        sum,
+    "pow":        pow,
+    "divmod":     divmod,
+    # Logic / introspection
+    "any":        any,
+    "all":        all,
+    "isinstance": isinstance,
+    "issubclass": issubclass,
+    "callable":   callable,
+    "hasattr":    hasattr,
+    "getattr":    getattr,
+    "setattr":    setattr,
+    "print":      print,
+    "repr":       repr,
+    "str":        str,
+    # Exceptions the LLM may catch
+    "Exception":       Exception,
+    "ValueError":      ValueError,
+    "TypeError":       TypeError,
+    "KeyError":        KeyError,
+    "IndexError":      IndexError,
+    "AttributeError":  AttributeError,
+    "StopIteration":   StopIteration,
+    "RuntimeError":    RuntimeError,
+    "NotImplementedError": NotImplementedError,
+}
 
 
 class SafeExecutor:
-    """Executes LLM-generated cleaning code in an isolated subprocess."""
+    """
+    Executes LLM-generated cleaning code inside a restricted namespace
+    with a hard wall-clock timeout implemented via a daemon thread.
 
-    def run_cleaning_function(self, df: pd.DataFrame, code: str) -> pd.DataFrame:
+    Security model: restricted __builtins__ prevents the most common
+    abuse patterns. This is sufficient for a local, offline application
+    where the code source is a local LLM, not the internet.
+    """
+
+    def run_cleaning_function(
+        self, df: pd.DataFrame, code: str
+    ) -> pd.DataFrame:
         """
-        Execute the LLM-generated clean(df) function in a child process.
-        Raises RuntimeError if execution fails or times out.
+        Execute `code` which must define a function named `clean(df)`.
+        Returns the cleaned DataFrame or raises RuntimeError on failure.
         """
-        import io
+        result: list[pd.DataFrame | None] = [None]
+        error:  list[Exception | None]    = [None]
 
-        # Serialise the DataFrame for IPC via Parquet (preserves dtypes)
-        buf = io.BytesIO()
-        df.to_parquet(buf, index=True)
-        df_bytes = buf.getvalue()
+        def _run() -> None:
+            try:
+                safe_globals: dict[str, Any] = {
+                    "__builtins__": _SAFE_BUILTINS,
+                    "pd":  pd,
+                    "np":  np,
+                    "re":  re,
+                }
+                local_ns: dict[str, Any] = {}
 
-        queue: mp.Queue = mp.Queue()
-        proc = mp.Process(
-            target=_worker,
-            args=(code, df_bytes, queue),
-            daemon=True,
-        )
-        proc.start()
-        proc.join(timeout=SANDBOX_TIMEOUT)
+                exec(code, safe_globals, local_ns)  # noqa: S102
 
-        if proc.is_alive():
-            proc.terminate()
-            proc.join()
+                if "clean" not in local_ns:
+                    raise RuntimeError(
+                        "Generated code did not define a function named 'clean'.\n"
+                        f"Defined names: {list(local_ns.keys())}"
+                    )
+
+                cleaned = local_ns["clean"](df)
+
+                if not isinstance(cleaned, pd.DataFrame):
+                    raise RuntimeError(
+                        f"clean() returned {type(cleaned).__name__}, "
+                        "expected pd.DataFrame."
+                    )
+
+                result[0] = cleaned
+
+            except Exception as exc:
+                error[0] = exc
+
+        thread = threading.Thread(target=_run, daemon=True, name="sandbox-exec")
+        thread.start()
+        thread.join(timeout=SANDBOX_TIMEOUT)
+
+        if thread.is_alive():
+            # Thread overran timeout — it will eventually finish on its own
+            # (daemon thread, so it won't block process exit)
             raise RuntimeError(
-                f"Sandbox timeout: LLM code did not complete within {SANDBOX_TIMEOUT}s."
+                f"Sandbox timeout: code did not complete within {SANDBOX_TIMEOUT}s."
             )
 
-        if queue.empty():
-            raise RuntimeError("Sandbox returned no result (process crashed).")
+        if error[0] is not None:
+            raise RuntimeError(f"Sandbox execution error: {error[0]}") from error[0]
 
-        status, payload = queue.get_nowait()
-        if status == "error":
-            raise RuntimeError(f"Sandbox execution error: {payload}")
+        if result[0] is None:
+            raise RuntimeError("Sandbox returned no result (unknown failure).")
 
-        result_df = pd.read_parquet(io.BytesIO(payload))
-        log.info("Sandbox execution successful. Output shape: %s", result_df.shape)
-        return result_df
+        log.info("Sandbox OK — output shape: %s", result[0].shape)
+        return result[0]
