@@ -23,13 +23,15 @@ _PROMPT = """\
 Act as a Senior Data Engineer. Analyze the schema and sample data to identify inconsistencies and formatting errors. 
 Provide a clean, robust implementation that ensures data integrity.
 
-Rules:
+Strict Rules:
 - No imports
 - dtype must be strings
 - Keep column names unchanged
+- Do not include any comments or explanations
+- Keep the output concise, only the necessary code
 - Last line must be: return df
 
-Write ONLY the indented body of this function.
+Write ONLY the indented body of this function. (Don't include the 'def clean(df):' line, just the body.)
 
 def clean(df):
     return df

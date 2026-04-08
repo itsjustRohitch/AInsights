@@ -19,7 +19,7 @@ import streamlit as st
 
 st.set_page_config(
     page_title="AInsights",
-    page_icon="⬡",
+    page_icon="🔷",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -196,21 +196,23 @@ def render_sidebar() -> None:
     with st.sidebar:
         # Logo
         st.markdown(
-            '<div style="padding:1rem 0 1.25rem;">'
-            '<div style="display:flex;align-items:center;gap:10px;">'
-            '<div style="width:36px;height:36px;background:linear-gradient(135deg,#6366f1,#34d399);'
-            'border-radius:10px;display:flex;align-items:center;justify-content:center;'
-            'font-size:18px;flex-shrink:0;">⬡</div>'
+            '<div style="padding:0.75rem 0 0.75rem;">'
+            '<div style="display:flex;align-items:center;gap:14px;">'
+            '<div style="width:48px;height:48px;background:linear-gradient(135deg,#6366f1,#34d399);'
+            'border-radius:12px;display:flex;align-items:center;justify-content:center;'
+            'font-size:24px;flex-shrink:0;">⬡</div>'
             '<div>'
-            '<div style="font-size:1.15rem;font-weight:700;letter-spacing:-0.03em;color:#f1f5f9;">'
+            '<div style="font-size:1.5rem;font-weight:700;letter-spacing:-0.03em;line-height:1.1;'
+            'background:linear-gradient(135deg,#f1f5f9 0%,#818cf8 55%,#34d399 100%);'
+            '-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">'
             'AInsights</div>'
-            '<div style="font-size:0.68rem;color:#475569;letter-spacing:0.1em;text-transform:uppercase;">'
-            'Local-first · 100% private</div>'
+            '<div style="font-size:0.55rem;color:#475569;letter-spacing:0.12em;text-transform:uppercase;line-height:1.4;">'
+            'Agentic BI System | Privacy-Focused</div>'
             '</div></div></div>',
             unsafe_allow_html=True,
         )
 
-        st.markdown("<hr style='margin:0 0 1rem;'>", unsafe_allow_html=True)
+        st.markdown("<hr style='margin:0 0 0.75rem;'>", unsafe_allow_html=True)
 
         # ── LLM status ──────────────────────────────────────────────────────
         st.markdown(
@@ -252,7 +254,7 @@ def render_sidebar() -> None:
         st.markdown(
             '<div style="margin-bottom:1.25rem;">'
             '<div style="font-size:0.7rem;color:#475569;text-transform:uppercase;'
-            'letter-spacing:0.09em;margin-bottom:7px;">Pipeline</div>'
+            'letter-spacing:0.09em;margin-bottom:7px;">Data Status</div>'
             f'<span class="badge badge-{badge_cls}">{icon} {label}</span>'
             '</div>',
             unsafe_allow_html=True,
@@ -268,7 +270,7 @@ def render_sidebar() -> None:
             try:
                 csv_bytes = httpx.get(f"{BACKEND_URL}/data/cleaned", timeout=20).content
                 st.download_button(
-                    "⬇ Download cleaned CSV",
+                    "⬇ Download Cleaned CSV",
                     data=csv_bytes,
                     file_name="ainsights_cleaned_data.csv",
                     mime="text/csv",
@@ -370,8 +372,10 @@ def render_sidebar() -> None:
 
         st.markdown("<hr style='margin:1rem 0;'>", unsafe_allow_html=True)
         st.markdown(
-            '<div style="font-size:0.68rem;color:#334155;padding-bottom:0.5rem;">'
-            'AInsights v1.0 &nbsp;·&nbsp; ChromaDB</div>',
+            '<div style="font-size:0.75rem;color:#334155;padding-bottom:0.5rem;">'
+            'Created by<br></div>'
+            '<div style="font-size:0.70rem;color:#334155;padding-bottom:0.5rem;">'
+            'Ishan Ravishankar <br> Chinta Sri Durga Rohit</div>',
             unsafe_allow_html=True,
         )
 
@@ -388,15 +392,14 @@ def render_about_tab() -> None:
         '</div>'
         '<div class="hero-tagline">'
         'A privacy-first, local-first Business Intelligence platform powered by on-device AI. '
-        'Upload your data, visualise it instantly, and query it in plain English — '
-        'entirely offline, with no data ever leaving your machine.'
+        'Upload your data, visualise it instantly, and query it in plain English. <br>'
+        'Entirely offline, with no data ever leaving your machine.'
         '</div>'
         '<div class="hero-badges">'
-        '<span class="badge badge-info">100% Local</span>'
-        '<span class="badge badge-success">Zero Cloud</span>'
-        '<span class="badge badge-pink">RAG-Powered</span>'
-        '<span class="badge badge-warning">qwen2.5-coder:7b</span>'
-        '<span class="badge badge-idle">ChromaDB</span>'
+        '<span class="badge badge-info">AI Powered</span>'
+        '<span class="badge badge-success">100% Private</span>'
+        '<span class="badge badge-pink">Fully Autonomous</span>'
+        '<span class="badge badge-warning">RAG Enhanced</span>'
         '</div>'
         '</div>',
         unsafe_allow_html=True,
@@ -415,8 +418,8 @@ def render_about_tab() -> None:
             "agent-icon-a", "🔧", "Agent A", "Data Engineer",
             "Autonomous ETL pipeline that cleans and standardises your data using LLM-generated code.",
             ["CSV, Excel, JSON, XML and PDF table support",
-             "LLM cleaning with rule-based fallback",
-             "Zero tolerance for column loss"],
+             "Workflow stages visible instantly with live stepper",
+             "LLM cleaning with rule-based fallback"],
             "#fb923c",
         ),
         (
@@ -424,15 +427,15 @@ def render_about_tab() -> None:
             "Reads the cleaned dataset and auto-selects the most appropriate Plotly charts.",
             ["Detects numeric, categorical and datetime columns",
              "Renders heatmaps, time series, box plots and more",
-             "Accepts custom on-demand chart requests"],
+             "Accepts custom chart requests"],
             "#34d399",
         ),
         (
             "agent-icon-c", "💬", "Agent C", "Analyst",
             "Conversational BI using ChromaDB retrieval combined with live Pandas calculations.",
             ["RAG retrieval over documents and tabular rows",
-             "Live Pandas execution for precise numbers",
-             "Grounded answers with data citations"],
+             "Grounded answers with data citations ",
+             "Live Pandas execution for precision"],
             "#818cf8",
         ),
         (
@@ -577,9 +580,6 @@ def render_upload_tab() -> None:
             '<div class="glass-card">'
             '<div style="font-size:0.88rem;color:#94a3b8;line-height:1.65;">'
             'Upload PDFs, text files, or Markdown documents to enrich Agent C\'s knowledge base. '
-            'Documents are chunked, embedded with '
-            '<code style="color:#818cf8;font-family:JetBrains Mono,monospace;font-size:0.82rem;">'
-            'all-MiniLM-L6-v2</code>, and stored in ChromaDB.'
             '</div></div>',
             unsafe_allow_html=True,
         )
@@ -598,7 +598,7 @@ def render_upload_tab() -> None:
                     unsafe_allow_html=True,
                 )
             with col_b:
-                if st.button("🔍 Ingest", type="primary",
+                if st.button("▶ Ingest", type="primary",
                              use_container_width=True, key="ingest_doc_btn"):
                     _ingest_document(uploaded_doc)
 
@@ -801,7 +801,7 @@ def render_visualize_tab() -> None:
         '<div class="section-icon agent-icon-b">📊</div>'
         '<div>'
         '<div class="section-title">Visualizations</div>'
-        '<div class="section-subtitle">Auto-generated charts plus on-demand custom chart requests</div>'
+        '<div class="section-subtitle">Auto-generated charts • Custom chart requests</div>'
         '</div></div>',
         unsafe_allow_html=True,
     )
@@ -843,7 +843,7 @@ def render_visualize_tab() -> None:
             )
 
     if refresh or not st.session_state.get("chart_figures"):
-        with st.status("Agent B is generating charts …", expanded=True) as s:
+        with st.status("Agent B is generating charts …", expanded=False) as s:
             st.write("Detecting column types …")
             st.write("Selecting optimal chart types …")
             try:
