@@ -1,0 +1,66 @@
+# ── Stage 1: dependency builder ───────────────────────────────────────────────
+FROM python:3.13-slim AS builder
+
+WORKDIR /build
+
+# System packages required to compile lxml, chromadb, onnxruntime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies into an isolated prefix
+# so we can copy just the site-packages in the next stage
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# Pre-download the HuggingFace embedding model
+# This runs once during build so the container is fully offline at runtime
+RUN TRANSFORMERS_OFFLINE=0 python -c "\
+    from sentence_transformers import SentenceTransformer; \
+    SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/install/hf_cache')"
+
+
+# ── Stage 2: lean runtime image ───────────────────────────────────────────────
+FROM python:3.13-slim AS runtime
+
+WORKDIR /app
+
+# Minimal runtime system deps only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from builder
+COPY --from=builder /install /usr/local
+ENV HF_HOME=/usr/local/hf_cache
+ENV TRANSFORMERS_OFFLINE=1
+ENV SENTENCE_TRANSFORMERS_HOME=/usr/local/hf_cache
+
+# Copy application source
+COPY backend/ ./backend/
+COPY .env.example ./.env
+
+# Create data directories (volumes will mount over these at runtime)
+RUN mkdir -p /app/data/uploads /app/data/vectorstore /app/data/jobs
+
+# Non-root user for security
+RUN useradd -m -u 1000 ainsights && chown -R ainsights:ainsights /app
+USER ainsights
+
+EXPOSE 8000
+
+# Healthcheck — used by docker compose depends_on
+HEALTHCHECK --interval=10s --timeout=5s --retries=8 --start-period=30s \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "backend.main:app", \
+    "--host", "0.0.0.0", \
+    "--port", "8000", \
+    "--workers", "1", \
+    "--timeout-keep-alive", "300", \
+    "--log-level", "info"]

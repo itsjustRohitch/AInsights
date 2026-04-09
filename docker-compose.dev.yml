@@ -1,0 +1,37 @@
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+name: ainsights
+
+services:
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    volumes:
+      - ./backend:/app/backend          # live mount — changes reflect immediately
+      - app_data:/app/data
+    command: >
+      uvicorn backend.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir /app/backend
+      --log-level debug
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    volumes:
+      - ./frontend:/app/frontend        # live mount
+    command: >
+      streamlit run frontend/app.py
+      --server.port=8501
+      --server.address=0.0.0.0
+      --server.headless=true
+      --server.fileWatcherType=poll
+      --theme.base=dark
+
+  # Disable nginx in dev — access services directly
+  nginx:
+    profiles: ["production"]            # only starts with --profile production
