@@ -13,6 +13,9 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
+from fpdf import FPDF
+from fpdf.enums import XPos, YPos
+import io
 
 import httpx
 import streamlit as st
@@ -1077,7 +1080,7 @@ def render_chat_tab() -> None:
                 "Ask …",
                 key=input_key,
                 label_visibility="collapsed",
-                placeholder="e.g. What is the average price by location?",
+                placeholder="Ask your question here",
             )
         with col_send:
             send = st.button("➤", type="primary", use_container_width=True, key="send_btn")
@@ -1154,20 +1157,64 @@ def render_chat_tab() -> None:
             # Rerun renders the new message in msg_container, above the input
             st.rerun()
 
-        # Export chat
+        # Export chat        
         if st.session_state.chat_history:
             st.markdown("<div style='height:0.25rem'></div>", unsafe_allow_html=True)
             col_exp, _ = st.columns([1, 6])
+            
             with col_exp:
-                text = "\n\n".join(
-                    f"[{m['role'].upper()} {m.get('time','')}]\n{m['content']}"
-                    for m in st.session_state.chat_history
-                )
+                # 1. Get the current filename (most recent upload)
+                uploaded_files = st.session_state.get("uploaded_files", [])
+                current_file_name = uploaded_files[-1]["name"] if uploaded_files else "General Session"
+                
+                # 2. Create the PDF object
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_auto_page_break(auto=True, margin=15)
+                
+                # --- HEADER SECTION ---
+                # Main Title
+                pdf.set_font("Helvetica", 'B', 22)
+                pdf.cell(0, 12, "AInsights - Transcript Record", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+                
+                # Sub-heading: File Name
+                pdf.set_font("Helvetica", 'B', 12)
+                pdf.set_text_color(80, 80, 80) 
+                pdf.cell(0, 8, f"Dataset: {current_file_name}", 
+                        new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+                
+                # Separator Line
+                pdf.set_draw_color(200, 200, 200)
+                pdf.line(20, pdf.get_y() + 2, 190, pdf.get_y() + 2)
+                pdf.ln(12) 
+                pdf.set_text_color(0, 0, 0) # Reset color
+                # ----------------------
+
+                # 3. Loop through history (Time removed)
+                for m in st.session_state.chat_history:
+                    role = m['role'].upper()
+                    content = str(m['content'])
+                    
+                    # Message Header (Role only)
+                    pdf.set_font("Helvetica", 'B', 10)
+                    pdf.set_fill_color(245, 245, 245)
+                    pdf.cell(0, 8, f" {role}", 
+                            new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True)
+                    
+                    # Message Content
+                    pdf.set_font("Helvetica", size=11)
+                    pdf.multi_cell(0, 7, content, 
+                                new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                    pdf.ln(6) # Spacing between messages
+
+                # 4. Final Export
+                pdf_bytes = bytes(pdf.output())
+                
                 st.download_button(
-                    "⬇ Export chat",
-                    data=text,
-                    file_name="ainsights_chat.txt",
-                    mime="text/plain",
+                    label="⬇ Export PDF",
+                    data=pdf_bytes,
+                    file_name=f"ainsights_{current_file_name.split('.')[0]}_chat.pdf",
+                    mime="application/pdf",
                     use_container_width=True,
                 )
 
