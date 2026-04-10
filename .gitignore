@@ -1,29 +1,9 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Virtual environments
-venv/
-env/
 .venv/
+__pycache__/
+*.pyc
 .env
-
-# Streamlit secrets
-.streamlit/secrets.toml
-
-# IDEs
-.vscode/
-.idea/
-
-# OS generated files
-.DS_Store
-Thumbs.db
-
-# Application data / file uploads
-*.csv
-*.xlsx
-*.xls
-*.json
-*.pdf
-*.txt
+backend/data/
+dist/
+build/
+*.spec.bak
+*.egg-info/
