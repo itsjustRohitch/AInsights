@@ -41,12 +41,6 @@ def profile(df: pd.DataFrame) -> dict:
 
 
 def compact_schema_str(schema: dict) -> str:
-    """
-    One line per column:
-      col_name (dtype, semantic, X% null): [v1, v2, v3]
-
-    Used directly in LLM prompts — kept deliberately short.
-    """
     lines = []
     for col, meta in schema["columns"].items():
         lines.append(
@@ -57,10 +51,6 @@ def compact_schema_str(schema: dict) -> str:
 
 
 def _head_str(df: pd.DataFrame) -> str:
-    """
-    df.head(3) formatted as a compact string for LLM prompt injection.
-    Caps columns and column width to avoid token bloat.
-    """
     try:
         return df.head(3).to_string(
             max_cols=20,
@@ -73,7 +63,6 @@ def _head_str(df: pd.DataFrame) -> str:
 
 
 def _infer_semantic(series: pd.Series) -> str:
-    """Heuristic semantic type — used by rule-based fallback and prompt context."""
     dtype_str = str(series.dtype)
 
     if "int"      in dtype_str: return "numeric"
@@ -81,7 +70,6 @@ def _infer_semantic(series: pd.Series) -> str:
     if "datetime" in dtype_str: return "datetime"
     if "bool"     in dtype_str: return "categorical"
 
-    # Try to detect datetime strings
     sample = series.dropna().head(30).astype(str)
     date_pattern = r"\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}"
     if sample.str.match(date_pattern).mean() > 0.5:

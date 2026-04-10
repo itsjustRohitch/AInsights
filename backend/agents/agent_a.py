@@ -56,7 +56,6 @@ class DataEngineerAgent:
         )
         self._executor = SafeExecutor()
 
-    # ─────────────────────────────────────────────
     def run(self, input_path: Path, output_path: Path) -> dict:
         t0 = time.perf_counter()
 
@@ -102,7 +101,6 @@ class DataEngineerAgent:
 
         return result
 
-    # ─────────────────────────────────────────────
     def _clean(self, df: pd.DataFrame, schema: dict):
 
         head = schema.get("head", "")
@@ -173,25 +171,18 @@ class DataEngineerAgent:
 
         return self._rule_based(df, schema), "rule_based_fallback"
 
-    # ─────────────────────────────────────────────
     def _looks_truncated(self, raw: str) -> bool:
         raw = raw.strip()
         if not raw:
             return True
-
-        # Odd number of fences means an opening fence with no closing fence
         if raw.count("```") % 2 == 1:
             return True
 
         last = raw.splitlines()[-1].strip()
 
-        # These characters genuinely indicate an incomplete statement.
-        # Removed '"' and "'" — a line ending with a closed string is valid.
         return last.endswith(("=", ",", "(", "[", "{", ":"))
 
-    # ─────────────────────────────────────────────
     def _extract(self, raw: str) -> str:
-        # Remove markdown fences
         raw = re.sub(r"```(?:python)?", "", raw)
         raw = raw.replace("```", "")
 
@@ -226,7 +217,6 @@ class DataEngineerAgent:
 
         return body
 
-    # ─────────────────────────────────────────────
     def _safe(self, result: pd.DataFrame, original: pd.DataFrame):
 
         missing = set(original.columns) - set(result.columns)
@@ -250,7 +240,6 @@ class DataEngineerAgent:
 
         return True, ""
 
-    # ─────────────────────────────────────────────
     def _restore_columns(self, df_clean, df_raw, original_columns):
         for col in original_columns:
             if col not in df_clean.columns:
@@ -258,20 +247,16 @@ class DataEngineerAgent:
                 df_clean[col] = df_raw[col]
         return df_clean[original_columns]
 
-    # ─────────────────────────────────────────────
     def _rule_based(self, df: pd.DataFrame, schema: dict):
         log.info("Rule-based cleaning started (%d cols)", len(df.columns))
 
         for col in df.columns:
             try:
-                # ffill() is the pandas 2.x forward-fill method.
-                # fillna(method="ffill") was deprecated in 2.1 and removed in 3.0.
                 df[col] = df[col].ffill()
             except Exception as e:
                 log.warning("Rule-based failed for '%s': %s", col, e)
 
         df = df.drop_duplicates().reset_index(drop=True)
-
         log.info("Rule-based cleaning complete. Output shape: %s", df.shape)
 
         return df

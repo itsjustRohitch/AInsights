@@ -24,12 +24,6 @@ MIN_ROWS_TIMESERIES = 5
 MAX_CATEGORIES_BAR  = 25
 MAX_CHARTS          = 7
 
-# ── Custom chart prompt ────────────────────────────────────────────────────────
-# Optimized:
-# - head(3) gives concrete column value examples
-# - theme block injected once as a constant — model just calls _theme()
-# - strict output contract prevents fig.show() / import errors
-
 _CUSTOM_PROMPT = """\
 Write Python to create a Plotly figure for the request below.
 
@@ -54,7 +48,6 @@ fig ="""
 
 class VisualizerAgent:
 
-    # ── Auto chart pipeline ───────────────────────────────────────────────────
     def run(self, csv_path: Path) -> list[dict]:
         log.info("Agent B auto: %s", csv_path.name)
         df = pd.read_csv(csv_path)
@@ -102,13 +95,11 @@ class VisualizerAgent:
         log.info("Agent B: %d charts generated.", len(unique))
         return unique[:MAX_CHARTS]
 
-    # ── Custom chart generation ───────────────────────────────────────────────
     def generate_custom_chart(self, csv_path: Path, request: str) -> dict | None:
         from langchain_ollama import OllamaLLM
 
         df = pd.read_csv(csv_path)
 
-        # Compact schema + head snippet
         schema_lines = []
         for col in df.columns[:25]:
             schema_lines.append(
@@ -147,7 +138,6 @@ class VisualizerAgent:
                 if not raw:
                     continue
 
-                # Prompt ended at 'fig =' so prepend it
                 code = "fig = " + raw
                 result = self._exec_chart(code, df)
                 if result:
@@ -180,7 +170,7 @@ class VisualizerAgent:
             "df": df.copy(),
         }
         local_ns: dict = {}
-        exec(code, safe_globals, local_ns)  # noqa: S102
+        exec(code, safe_globals, local_ns)  
 
         fig = local_ns.get("fig") or safe_globals.get("fig")
         if fig is None:
@@ -190,7 +180,6 @@ class VisualizerAgent:
 
         return json.loads(fig.to_json())
 
-    # ── Datetime detection ────────────────────────────────────────────────────
     def _detect_datetime_cols(self, df: pd.DataFrame) -> list[str]:
         dt_cols = df.select_dtypes(include="datetime").columns.tolist()
         for col in df.select_dtypes(include=["object"]).columns:
@@ -205,7 +194,6 @@ class VisualizerAgent:
                 pass
         return dt_cols
 
-    # ── Theme ─────────────────────────────────────────────────────────────────
     def _theme(self, fig: go.Figure, title: str) -> go.Figure:
         fig.update_layout(
             title={
@@ -232,7 +220,6 @@ class VisualizerAgent:
     def _to_json(self, fig: go.Figure) -> dict:
         return json.loads(fig.to_json())
 
-    # ── Chart builders ────────────────────────────────────────────────────────
     def _correlation_heatmap(
         self, df: pd.DataFrame, num_cols: list[str], n: int
     ) -> dict:

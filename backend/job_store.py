@@ -22,7 +22,7 @@ from pathlib import Path
 log = logging.getLogger("ainsights.job_store")
 
 _JOBS_DIR: Path | None = None
-JOB_TTL = 7200   # seconds before a job file is eligible for cleanup
+JOB_TTL = 7200   
 
 
 def _jobs_dir() -> Path:
@@ -36,11 +36,6 @@ def _jobs_dir() -> Path:
 
 def _job_path(job_id: str) -> Path:
     return _jobs_dir() / f"{job_id}.json"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Public API — drop-in replacement for dict-based _jobs operations
-# ─────────────────────────────────────────────────────────────────────────────
 
 def set_job(
     job_id: str,
@@ -58,7 +53,6 @@ def set_job(
     }
     path = _job_path(job_id)
 
-    # Atomic write: write to temp then rename
     try:
         fd, tmp = tempfile.mkstemp(
             dir=str(_jobs_dir()), prefix=f".{job_id}_", suffix=".tmp"
@@ -68,7 +62,6 @@ def set_job(
         os.replace(tmp, path)
     except Exception as exc:
         log.error("Failed to write job %s: %s", job_id, exc)
-        # Best-effort non-atomic fallback
         try:
             path.write_text(json.dumps(payload), encoding="utf-8")
         except Exception:
@@ -87,13 +80,10 @@ def get_job(job_id: str) -> dict | None:
         log.error("Failed to read job %s: %s", job_id, exc)
         return None
 
-
 def job_exists(job_id: str) -> bool:
     return _job_path(job_id).exists()
 
-
 def cleanup_old_jobs() -> int:
-    """Delete job files older than JOB_TTL seconds. Returns number deleted."""
     cutoff = time.time() - JOB_TTL
     deleted = 0
     try:

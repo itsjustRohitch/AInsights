@@ -6,7 +6,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install only the packages the frontend needs
 RUN pip install --no-cache-dir \
     streamlit==1.40.2 \
     httpx==0.28.0 \

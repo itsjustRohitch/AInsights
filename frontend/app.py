@@ -31,18 +31,10 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 OLLAMA_URL  = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 CSS_PATH    = Path(__file__).parent / "assets" / "style.css"
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CSS
-# ─────────────────────────────────────────────────────────────────────────────
 def inject_css() -> None:
     css = CSS_PATH.read_text(encoding="utf-8")
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Session state
-# ─────────────────────────────────────────────────────────────────────────────
 def init_session() -> None:
     defaults: dict = {
         "pipeline_status":   "idle",
@@ -54,7 +46,6 @@ def init_session() -> None:
         "current_job_id":    None,
         "chat_input_key":    0,
         "pipeline_result":   {},
-        # Ollama status cache
         "_ollama_online":    False,
         "_ollama_check_ts":  0.0,
     }
@@ -62,13 +53,8 @@ def init_session() -> None:
         if k not in st.session_state:
             st.session_state[k] = v
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
 def _now() -> str:
     return datetime.now().strftime("%H:%M")
-
 
 def _fetch_schema() -> dict | None:
     try:
@@ -78,7 +64,6 @@ def _fetch_schema() -> dict | None:
     except Exception:
         pass
     return None
-
 
 def _poll_job(job_id: str) -> dict:
     backoff = 1.2
@@ -93,7 +78,6 @@ def _poll_job(job_id: str) -> dict:
         time.sleep(backoff)
         backoff = min(backoff * 1.35, 7)
     return {"status": "timeout", "detail": "Job timed out."}
-
 
 def _get_ollama_status() -> bool:
     """
@@ -111,7 +95,6 @@ def _get_ollama_status() -> bool:
     st.session_state["_ollama_online"]   = online
     st.session_state["_ollama_check_ts"] = time.time()
     return online
-
 
 def _generate_suggestions(schema_info: dict | None) -> list[str]:
     base = ["Explain the dataset", "Find outliers"]
@@ -131,7 +114,6 @@ def _generate_suggestions(schema_info: dict | None) -> list[str]:
         suggestions.append(f"Group by {cat_cols[0]}")
     return suggestions[:5]
 
-
 def _friendly_method(method: str) -> tuple[str, str]:
     if not method or method == "unknown":
         return "idle", "Unknown"
@@ -144,9 +126,6 @@ def _friendly_method(method: str) -> tuple[str, str]:
     return "idle", method
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Horizontal stepper
-# ─────────────────────────────────────────────────────────────────────────────
 _STEP_LABELS = ["Upload",       "Schema",           "Clean",         "Execute",      "Embed"]
 _STEP_DESCS  = ["Saving file",  "Profiling columns","LLM writes code","Sandbox run", "ChromaDB index"]
 
@@ -177,7 +156,6 @@ def _render_stepper(
         )
 
         if i < len(states) - 1:
-            # Connector takes the state of the left step
             conn = "done" if state == "done" else ("active" if state == "active" else "pending")
             inner += f'<div class="hstep-connector {conn}"></div>'
 
@@ -192,12 +170,8 @@ def _render_stepper(
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Sidebar
-# ─────────────────────────────────────────────────────────────────────────────
 def render_sidebar() -> None:
     with st.sidebar:
-        # Logo
         st.markdown(
             '<div style="padding:0.75rem 0 0.75rem;">'
             '<div style="display:flex;align-items:center;gap:14px;">'
@@ -216,8 +190,6 @@ def render_sidebar() -> None:
         )
 
         st.markdown("<hr style='margin:0 0 0.75rem;'>", unsafe_allow_html=True)
-
-        # ── LLM status ──────────────────────────────────────────────────────
         st.markdown(
             '<div style="font-size:0.7rem;color:#475569;text-transform:uppercase;'
             'letter-spacing:0.09em;margin-bottom:7px;">AI model</div>',
@@ -238,14 +210,12 @@ def render_sidebar() -> None:
             unsafe_allow_html=True,
         )
 
-        # Refresh LLM status button
         if st.button("↻ Refresh status", use_container_width=True, key="refresh_llm"):
-            st.session_state["_ollama_check_ts"] = 0.0   # force re-check
+            st.session_state["_ollama_check_ts"] = 0.0   
             st.rerun()
 
         st.markdown("<hr style='margin:0.75rem 0;'>", unsafe_allow_html=True)
 
-        # ── Pipeline status ──────────────────────────────────────────────────
         status = st.session_state.pipeline_status
         status_map = {
             "idle":       ("idle",    "⬡", "Waiting for data"),
@@ -263,7 +233,6 @@ def render_sidebar() -> None:
             unsafe_allow_html=True,
         )
 
-        # ── Download cleaned CSV ─────────────────────────────────────────────
         if st.session_state.pipeline_status == "ready":
             st.markdown(
                 '<div style="font-size:0.7rem;color:#475569;text-transform:uppercase;'
@@ -284,7 +253,6 @@ def render_sidebar() -> None:
                 st.caption("CSV unavailable")
             st.markdown("<hr style='margin:0.75rem 0;'>", unsafe_allow_html=True)
 
-        # ── Uploaded files ───────────────────────────────────────────────────
         uploaded_files = st.session_state.get("uploaded_files", [])
         if uploaded_files:
             st.markdown(
@@ -307,7 +275,6 @@ def render_sidebar() -> None:
                     unsafe_allow_html=True,
                 )
 
-        # ── Dataset stats ────────────────────────────────────────────────────
         schema = st.session_state.get("schema_info")
         if schema:
             st.markdown(
@@ -382,10 +349,6 @@ def render_sidebar() -> None:
             unsafe_allow_html=True,
         )
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Tab: About
-# ─────────────────────────────────────────────────────────────────────────────
 def render_about_tab() -> None:
     st.markdown(
         '<div class="hero-wrapper">'
@@ -502,9 +465,6 @@ def render_about_tab() -> None:
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Tab: Upload & Clean
-# ─────────────────────────────────────────────────────────────────────────────
 def render_upload_tab() -> None:
     st.markdown(
         '<div class="section-header">'
@@ -560,15 +520,11 @@ def render_upload_tab() -> None:
                     key="run_pipeline_btn",
                 )
 
-            # ── Stepper placeholder directly below the button row ───────────
             stepper_placeholder = st.empty()
 
             if run_clicked:
                 _run_pipeline(uploaded_data, stepper_placeholder)
 
-        # ── Results — rendered on rerun after pipeline completes ────────────
-        # Lives outside the `if uploaded_data` block so it always renders
-        # after the file widget and stepper, never duplicated.
         if (
             st.session_state.pipeline_status == "ready"
             and st.session_state.get("pipeline_result")
@@ -610,19 +566,12 @@ def _run_pipeline(
     uploaded_file,
     stepper_placeholder: st.delta_generator.DeltaGenerator,
 ) -> None:
-    """
-    Full ETL pipeline with live horizontal stepper.
-    Stepper renders in the placeholder that sits directly below the Run button.
-    Calls st.rerun() on completion — results rendered by the caller's block (no duplication).
-    """
     st.session_state.pipeline_status = "processing"
     st.session_state.pipeline_result = {}
 
-    # Initial state: first step active, rest pending
     states = ["active", "pending", "pending", "pending", "pending"]
     _render_stepper(states, stepper_placeholder)
 
-    # ── Upload ────────────────────────────────────────────────────────────
     try:
         r = httpx.post(
             f"{BACKEND_URL}/upload/data",
@@ -642,7 +591,6 @@ def _run_pipeline(
     states[1] = "active"
     _render_stepper(states, stepper_placeholder)
 
-    # ── Poll with live stepper updates ───────────────────────────────────
     backoff = 1.5
     for _ in range(90):
         try:
@@ -692,7 +640,7 @@ def _run_pipeline(
                     st.session_state.schema_info = schema
 
                 st.session_state.pipeline_status = "ready"
-                time.sleep(0.6)   # let user see all-done state briefly
+                time.sleep(0.6)   
                 st.rerun()
                 return
 
@@ -795,9 +743,6 @@ def _ingest_document(uploaded_doc) -> None:
             st.error(final.get("detail", "Unknown error"))
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Tab: Visualizations
-# ─────────────────────────────────────────────────────────────────────────────
 def render_visualize_tab() -> None:
     st.markdown(
         '<div class="section-header">'
@@ -1007,12 +952,6 @@ def _chart_subtitle(fig_dict: dict, n_rows: int | str) -> str:
     return f"{row_str} rows analysed"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Tab: Chat
-# Chat messages and the "thinking" indicator always appear ABOVE the input row.
-# This is achieved by creating msg_container first (Streamlit renders containers
-# in creation order) then input_container, then filling them in any order.
-# ─────────────────────────────────────────────────────────────────────────────
 def render_chat_tab() -> None:
     st.markdown(
         '<div class="section-header">'
@@ -1038,16 +977,12 @@ def render_chat_tab() -> None:
         )
         return
 
-    # ── Create containers in display order ────────────────────────────────
-    # msg_container is created FIRST → always renders above input_container
     msg_container   = st.container()
     input_container = st.container()
 
-    # ── Fill messages container ───────────────────────────────────────────
     with msg_container:
         history = st.session_state.chat_history
 
-        # Suggestions only when conversation is empty
         if not history:
             suggestions = _generate_suggestions(st.session_state.schema_info)
             st.markdown(
@@ -1062,15 +997,11 @@ def render_chat_tab() -> None:
                         st.session_state._pending_q = sug
                         st.rerun()
 
-        # Render existing messages
         for msg in history:
             _render_chat_message(msg)
 
-        # Reserve a slot for the thinking indicator + live response
-        # This slot lives INSIDE msg_container → always above the input
         thinking_slot = st.empty()
 
-    # ── Fill input container ──────────────────────────────────────────────
     with input_container:
         input_key = f"chat_input_{st.session_state.chat_input_key}"
         col_input, col_send, col_clear = st.columns([8, 1, 1])
@@ -1091,7 +1022,6 @@ def render_chat_tab() -> None:
                 st.session_state.chat_input_key += 1
                 st.rerun()
 
-        # Handle pending suggestion tap
         pending = st.session_state.pop("_pending_q", None)
         if pending:
             question = pending
@@ -1099,16 +1029,11 @@ def render_chat_tab() -> None:
 
         if send and question and question.strip():
             q = question.strip()
-
-            # Increment key so textbox clears on rerun
             st.session_state.chat_input_key += 1
-
-            # Add user message to history
             st.session_state.chat_history.append(
                 {"role": "user", "content": q, "time": _now()}
             )
 
-            # Show thinking indicator in msg_container (above the input)
             thinking_slot.markdown(
                 '<div class="chat-thinking">'
                 '<div class="thinking-dots">'
@@ -1119,7 +1044,6 @@ def render_chat_tab() -> None:
                 unsafe_allow_html=True,
             )
 
-            # Blocking API call — browser shows indicator during this wait
             try:
                 r = httpx.post(
                     f"{BACKEND_URL}/chat",
@@ -1154,60 +1078,47 @@ def render_chat_tab() -> None:
                     "time":    _now(),
                 })
 
-            # Rerun renders the new message in msg_container, above the input
             st.rerun()
 
-        # Export chat        
         if st.session_state.chat_history:
             st.markdown("<div style='height:0.25rem'></div>", unsafe_allow_html=True)
             col_exp, _ = st.columns([1, 6])
             
             with col_exp:
-                # 1. Get the current filename (most recent upload)
                 uploaded_files = st.session_state.get("uploaded_files", [])
                 current_file_name = uploaded_files[-1]["name"] if uploaded_files else "General Session"
                 
-                # 2. Create the PDF object
                 pdf = FPDF()
                 pdf.add_page()
                 pdf.set_auto_page_break(auto=True, margin=15)
                 
-                # --- HEADER SECTION ---
-                # Main Title
                 pdf.set_font("Helvetica", 'B', 22)
                 pdf.cell(0, 12, "AInsights - Transcript Record", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
                 
-                # Sub-heading: File Name
                 pdf.set_font("Helvetica", 'B', 12)
                 pdf.set_text_color(80, 80, 80) 
                 pdf.cell(0, 8, f"Dataset: {current_file_name}", 
                         new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
                 
-                # Separator Line
                 pdf.set_draw_color(200, 200, 200)
                 pdf.line(20, pdf.get_y() + 2, 190, pdf.get_y() + 2)
                 pdf.ln(12) 
-                pdf.set_text_color(0, 0, 0) # Reset color
-                # ----------------------
+                pdf.set_text_color(0, 0, 0) 
 
-                # 3. Loop through history (Time removed)
                 for m in st.session_state.chat_history:
                     role = m['role'].upper()
                     content = str(m['content'])
                     
-                    # Message Header (Role only)
                     pdf.set_font("Helvetica", 'B', 10)
                     pdf.set_fill_color(245, 245, 245)
                     pdf.cell(0, 8, f" {role}", 
                             new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True)
                     
-                    # Message Content
                     pdf.set_font("Helvetica", size=11)
                     pdf.multi_cell(0, 7, content, 
                                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                    pdf.ln(6) # Spacing between messages
+                    pdf.ln(6) 
 
-                # 4. Final Export
                 pdf_bytes = bytes(pdf.output())
                 
                 st.download_button(
@@ -1258,9 +1169,6 @@ def _render_chat_message(msg: dict) -> None:
         )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Main — tab order: About → Upload → Visualize → Chat
-# ─────────────────────────────────────────────────────────────────────────────
 inject_css()
 init_session()
 render_sidebar()

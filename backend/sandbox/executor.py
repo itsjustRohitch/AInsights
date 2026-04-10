@@ -27,12 +27,8 @@ import pandas as pd
 
 log = logging.getLogger("ainsights.sandbox")
 
-SANDBOX_TIMEOUT = 60   # seconds
+SANDBOX_TIMEOUT = 60  
 
-# ── Restricted built-ins ──────────────────────────────────────────────────────
-# `object` MUST be present: LLM often writes
-#   df.select_dtypes(include=[object])
-# Without it the exec raises NameError and we silently fall back.
 
 _SAFE_BUILTINS: dict[str, Any] = {
     # Core types
@@ -94,24 +90,11 @@ _SAFE_BUILTINS: dict[str, Any] = {
     "NotImplementedError": NotImplementedError,
 }
 
-
 class SafeExecutor:
-    """
-    Executes LLM-generated cleaning code inside a restricted namespace
-    with a hard wall-clock timeout implemented via a daemon thread.
-
-    Security model: restricted __builtins__ prevents the most common
-    abuse patterns. This is sufficient for a local, offline application
-    where the code source is a local LLM, not the internet.
-    """
 
     def run_cleaning_function(
         self, df: pd.DataFrame, code: str
     ) -> pd.DataFrame:
-        """
-        Execute `code` which must define a function named `clean(df)`.
-        Returns the cleaned DataFrame or raises RuntimeError on failure.
-        """
         result: list[pd.DataFrame | None] = [None]
         error:  list[Exception | None]    = [None]
 
@@ -151,8 +134,6 @@ class SafeExecutor:
         thread.join(timeout=SANDBOX_TIMEOUT)
 
         if thread.is_alive():
-            # Thread overran timeout — it will eventually finish on its own
-            # (daemon thread, so it won't block process exit)
             raise RuntimeError(
                 f"Sandbox timeout: code did not complete within {SANDBOX_TIMEOUT}s."
             )

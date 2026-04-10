@@ -29,17 +29,6 @@ MAX_CONTEXT_CHARS       = 1000
 MAX_ROWS_PANDAS         = 50_000
 LLM_TIMEOUT             = 180
 
-# ── Prompts ───────────────────────────────────────────────────────────────────
-# Agent C uses two LLM calls:
-# 1. Code LLM  → generate Pandas expression (small, fast, temperature=0)
-# 2. Synthesis → write the final answer prose (temperature=0.1)
-#
-# Optimizations:
-# - Pandas prompt ends at the code start marker — model completes it directly
-# - head(3) shows concrete values so the model picks correct column names
-# - Synthesis prompt caps response length explicitly (prevents rambling)
-# - Both prompts avoid filler instructions; every sentence earns its tokens
-
 _PANDAS_PROMPT = """\
 Write a Python expression to answer the question using DataFrame `df`.
 
@@ -83,8 +72,6 @@ Retrieved data rows:
 Question: {question}
 Answer:"""
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 class AnalystAgent:
 
     def __init__(
@@ -111,7 +98,6 @@ class AnalystAgent:
             request_timeout=LLM_TIMEOUT,
         )
 
-    # ── Public ────────────────────────────────────────────────────────────────
     def run(self, question: str, csv_path: Path) -> dict:
         log.info("Agent C: '%s'", question[:80])
 
@@ -144,7 +130,6 @@ class AnalystAgent:
         for chunk in self._llm.stream(prompt):
             yield chunk
 
-    # ── Load ──────────────────────────────────────────────────────────────────
     def _load(self, csv_path: Path) -> pd.DataFrame | None:
         try:
             return pd.read_csv(csv_path, nrows=MAX_ROWS_PANDAS)
@@ -152,7 +137,6 @@ class AnalystAgent:
             log.error("CSV load failed: %s", exc)
             return None
 
-    # ── RAG retrieval ─────────────────────────────────────────────────────────
     def _retrieve(self, question: str) -> dict[str, list[str]]:
         try:
             return self._rag.query(question)
@@ -168,9 +152,7 @@ class AnalystAgent:
                 seen.append(m.group(1))
         return seen[:8]
 
-    # ── Pandas calculation ────────────────────────────────────────────────────
     def _calculate(self, question: str, df: pd.DataFrame) -> str:
-        # Build compact schema + head
         schema_lines = []
         for col in df.columns[:20]:
             schema_lines.append(
@@ -235,14 +217,14 @@ class AnalystAgent:
 
         lines = code.strip().splitlines()
         if len(lines) == 1:
-            return eval(lines[0], g)          # noqa: S307
+            return eval(lines[0], g)          
 
-        exec("\n".join(lines[:-1]), g, local) # noqa: S102
+        exec("\n".join(lines[:-1]), g, local) 
         g.update(local)
         try:
-            return eval(lines[-1], g)         # noqa: S307
+            return eval(lines[-1], g)         
         except SyntaxError:
-            exec(lines[-1], g, local)         # noqa: S102
+            exec(lines[-1], g, local)         
             return list(local.values())[-1] if local else None
 
     def _fmt(self, result: Any) -> str:
@@ -256,7 +238,6 @@ class AnalystAgent:
             return f"{result:,.4f}"
         return textwrap.shorten(str(result), width=MAX_PANDAS_RESULT_CHARS, placeholder=" …")
 
-    # ── Synthesis ─────────────────────────────────────────────────────────────
     def _synthesis_prompt(
         self, question: str, ctx: dict, pandas_result: str
     ) -> str:
