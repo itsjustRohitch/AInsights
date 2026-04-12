@@ -15,7 +15,9 @@ from datetime import datetime
 from pathlib import Path
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
-import io
+
+import threading
+import requests
 
 import httpx
 import streamlit as st
@@ -832,7 +834,7 @@ def render_visualize_tab() -> None:
     )
     col_gen, col_clear = st.columns([1, 5])
     with col_gen:
-        gen_btn = st.button("⚡ Generate chart", type="primary",
+        gen_btn = st.button("▶ Generate chart", type="primary",
                             use_container_width=True, key="gen_custom_chart")
     with col_clear:
         if st.button("✕ Clear custom", use_container_width=True, key="clear_custom"):
@@ -1167,6 +1169,20 @@ def _render_chat_message(msg: dict) -> None:
             '</div></div>',
             unsafe_allow_html=True,
         )
+
+#ping watchdog
+def heartbeat():
+    while True:
+        try:
+            requests.get("http://127.0.0.1:9999/ping", timeout=1)
+        except:
+            pass
+        time.sleep(5)  
+
+
+if "heartbeat_started" not in st.session_state:
+    threading.Thread(target=heartbeat, daemon=True).start()
+    st.session_state["heartbeat_started"] = True
 
 
 inject_css()
